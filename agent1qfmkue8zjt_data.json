@@ -1,19 +1,4 @@
 {
-    "latest_alerts": [
-        {
-            "symbol": "BTCUSDT",
-            "probability": 60,
-            "warning_level": "HIGH",
-            "evidence": {
-                "technical_signals": {
-                    "death_cross": true
-                },
-                "order_book_pressure": "Critical imbalance",
-                "liquidation_risk": "Score: 25"
-            },
-            "asi_analysis": "**Risk Assessment:** BTC faces severe downside risk with a 60% crash probability, exacerbated by a confirmed death cross and critical order book imbalance. Liquidation risk score of 25 indicates potential cascading sell pressure.\n\n**Recommended Action:** REDUCE exposure significantly. Avoid new long positions.\n\n**Key Factors:** Death cross signaling bearish momentum, extreme sell-side liquidity pressure, and high leveraged long liquidation risk.\n\n**Timeframe:** Immediate to 24-hour concern. Monitor closely for volatility spikes.",
-            "timestamp": "2025-10-22T22:37:34.453720"
-        }
-    ],
-    "last_scan": "2025-10-22T22:37:44.917344"
+    "latest_alerts": [],
+    "last_scan": "2025-10-24T18:56:06.582642"
 }
