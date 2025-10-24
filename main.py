@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from app.routers import users, crypto, telegram
 from app.routers.telegram_webhook import router as telegram_webhook_router
 from app.database import connect_to_mongo, close_mongo_connection
@@ -85,7 +86,7 @@ async def shutdown_event():
     
     logger.info("✅ Shutdown complete")
 
-@app.get("/")
+@app.get("/", summary="Root endpoint")
 def root():
     return {
         "status": "online",
