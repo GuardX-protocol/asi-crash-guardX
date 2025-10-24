@@ -384,6 +384,43 @@ async def delete_monitor_config(monitor_name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/monitor/trigger")
+async def trigger_monitoring():
+    """Manually trigger monitoring for testing"""
+    try:
+        from app.services.monitor_service import monitor_service
+        
+        if not monitor_service.running:
+            return {"error": "Monitor service is not running"}
+        
+        # Get active monitors
+        if is_connected():
+            monitors = await Monitor.find(Monitor.enabled == True).to_list()
+        else:
+            all_monitors = await fallback_storage.get_monitors()
+            monitors = [m for m in all_monitors if getattr(m, 'enabled', False)]
+        
+        if not monitors:
+            return {"message": "No active monitors found"}
+        
+        # Process each monitor once
+        results = []
+        for monitor in monitors:
+            try:
+                await monitor_service._process_monitor(monitor)
+                results.append({"monitor": monitor.name, "status": "processed"})
+            except Exception as e:
+                results.append({"monitor": monitor.name, "status": "error", "error": str(e)})
+        
+        return {
+            "message": f"Triggered monitoring for {len(monitors)} monitor(s)",
+            "results": results,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.patch("/alerts/{alert_id}")
 async def patch_alert(alert_id: str, alert_patch: dict):
     """Partial update of alert"""

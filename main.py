@@ -4,6 +4,7 @@ from app.routers.telegram_webhook import router as telegram_webhook_router
 from app.database import connect_to_mongo, close_mongo_connection
 from app.agents.crash_detector import crash_sentinel
 from app.services.telegram_polling import start_telegram_polling, stop_telegram_polling, get_polling_status
+from app.services.monitor_service import start_monitor_service, stop_monitor_service, get_monitor_service_status
 import asyncio
 import logging
 import threading
@@ -55,6 +56,9 @@ async def startup_event():
     # Start Telegram polling service
     await start_telegram_polling()
     
+    # Start monitor service
+    await start_monitor_service()
+    
     logger.info("🚀 Application startup complete")
 
 @app.on_event("shutdown")
@@ -63,6 +67,9 @@ async def shutdown_event():
     
     # Stop Telegram polling
     stop_telegram_polling()
+    
+    # Stop monitor service
+    stop_monitor_service()
     
     # Close MongoDB connection
     await close_mongo_connection()
@@ -131,4 +138,9 @@ async def get_agent_info():
 async def get_telegram_polling_status():
     """Get Telegram polling service status"""
     return get_polling_status()
+
+@app.get("/monitor/service-status")
+async def get_monitor_service_status_endpoint():
+    """Get monitor service status"""
+    return get_monitor_service_status()
 
