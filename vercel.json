@@ -13,12 +13,12 @@
     }
   ],
   "env": {
-    "MONGODB_URL": "@mongodb_url",
-    "DATABASE_NAME": "@database_name",
-    "ASI_API_KEY": "@asi_api_key",
-    "BINANCE_API_KEY": "@binance_api_key",
-    "BINANCE_API_SECRET": "@binance_api_secret",
-    "TELEGRAM_BOT_TOKEN": "@telegram_bot_token",
-    "AGENTVERSE_API_KEY": "@agentverse_api_key"
+    "MONGODB_URL": "@MONGODB_URL",
+    "DATABASE_NAME": "@DATABASE_NAME",
+    "ASI_API_KEY": "@ASI_API_KEY",
+    "BINANCE_API_KEY": "@BINANCE_API_KEY",
+    "BINANCE_API_SECRET": "@BINANCE_API_SECRET",
+    "TELEGRAM_BOT_TOKEN": "@TELEGRAM_BOT_TOKEN",
+    "AGENTVERSE_API_KEY": "@AGENTVERSE_API_KEY"
   }
 }
