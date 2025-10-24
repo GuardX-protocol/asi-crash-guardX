@@ -14,10 +14,19 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+
 app = FastAPI(
     title="Crypto Market Monitor & Crash Detector",
     description="A comprehensive FastAPI application with crypto monitoring, crash detection, and uAgents integration",
     version="2.0.0"
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(users.router, prefix="/users", tags=["users"])
@@ -77,14 +86,22 @@ async def shutdown_event():
     logger.info("✅ Shutdown complete")
 
 @app.get("/")
-async def root():
-    return {"message": "Welcome to FastAPI!"}
+def root():
+    return {
+        "status": "online",
+        "service": "GuardX Crash Sentinel API",
+        "version": "1.0.0",
+        "platform": "vercel"
+    }
+
 
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
 
-
+@app.get("/api/test")
+def test():
+    return {"message": "API is working!"}
 
 @app.get("/agent/status")
 async def get_agent_status():
