@@ -92,6 +92,102 @@ def get_wallet_type(address: str) -> str:
     else:
         return "Generic Crypto"
 
+async def store_user_interaction(telegram_id: str, username: str, first_name: str, last_name: str, language_code: str):
+    """Store or update user data on any Telegram interaction"""
+    try:
+        if not is_connected():
+            print(f"⚠️ Database not available - cannot store user interaction for {telegram_id}")
+            return
+        
+        # Check if user already exists
+        existing_user = await User.find_one(User.telegramId == telegram_id)
+        
+        if existing_user:
+            # Update existing user with latest info and interaction timestamp
+            update_data = {
+                'username': username,
+                'firstName': first_name,
+                'lastName': last_name,
+                'languageCode': language_code,
+                'lastLoginAt': datetime.utcnow(),
+                'updatedAt': datetime.utcnow(),
+                'isActive': True
+            }
+            
+            # Only update notification preferences if they don't exist
+            if not hasattr(existing_user, 'notificationPreferences') or not existing_user.notificationPreferences:
+                update_data['notificationPreferences'] = {
+                    'telegram_alerts': True,
+                    'email_alerts': False,
+                    'webhook_alerts': False
+                }
+            
+            await existing_user.update({"$set": update_data})
+            print(f"✅ Updated user interaction: {telegram_id} (@{username})")
+            
+        else:
+            # Create new user with temporary wallet address
+            temp_wallet = f"tg_{username}_{telegram_id}" if username else f"tg_user_{telegram_id}"
+            
+            user_data = {
+                'walletAddress': temp_wallet,
+                'telegramId': telegram_id,
+                'username': username,
+                'firstName': first_name,
+                'lastName': last_name,
+                'languageCode': language_code,
+                'email': None,
+                'isActive': True,
+                'notificationPreferences': {
+                    'telegram_alerts': True,
+                    'email_alerts': False,
+                    'webhook_alerts': False
+                },
+                'monitors': [],
+                'createdAt': datetime.utcnow(),
+                'updatedAt': datetime.utcnow(),
+                'lastLoginAt': datetime.utcnow()
+            }
+            
+            new_user = User(**user_data)
+            await new_user.insert()
+            print(f"✅ Created new user from interaction: {telegram_id} (@{username}) -> {temp_wallet}")
+            
+    except Exception as e:
+        print(f"❌ Error storing user interaction: {e}")
+
+async def check_and_prompt_wallet_setup(telegram_id: str, first_name: str):
+    """Check if user has a temporary wallet and prompt for real wallet setup"""
+    try:
+        if not is_connected():
+            return
+        
+        user = await User.find_one(User.telegramId == telegram_id)
+        if not user:
+            return
+        
+        # Check if user has a temporary wallet address
+        if user.walletAddress and user.walletAddress.startswith('tg_'):
+            # Only prompt occasionally (not on every message)
+            import random
+            if random.random() < 0.1:  # 10% chance to prompt
+                prompt_message = f"""💡 Hi {first_name}! 
+
+You're using a temporary wallet address: `{user.walletAddress}`
+
+🔗 Want to connect your real wallet for better security?
+• Send your MetaMask address (0x...)
+• Or send your Telegram wallet address
+• Or send /wallet to update anytime
+
+This helps secure your account and monitors! ✨"""
+                
+                await send_telegram_message_direct(telegram_id, prompt_message)
+                print(f"💡 Prompted user {telegram_id} for wallet setup")
+        
+    except Exception as e:
+        print(f"❌ Error checking wallet setup: {e}")
+
 @router.post("/webhook")
 async def telegram_webhook(update: TelegramUpdate):
     """Handle incoming Telegram updates"""
@@ -133,6 +229,13 @@ async def handle_message(message: Dict[str, Any]):
         
         if not telegram_id:
             return
+        
+        # Automatically store/update user data on any interaction
+        await store_user_interaction(telegram_id, username, first_name, last_name, language_code)
+        
+        # Check if user needs wallet setup (only for non-command messages)
+        if not text.startswith('/') and not await get_user_state(telegram_id):
+            await check_and_prompt_wallet_setup(telegram_id, first_name)
         
         # Handle /start command
         if text.startswith('/start'):
@@ -643,4 +746,23 @@ async def toggle_user_alerts(telegram_id: str, enable: bool):
 
 async def handle_callback_query(callback_query: Dict[str, Any]):
     """Handle callback queries"""
-    pass  # Placeholder for callback handling
+    try:
+        # Extract user info from callback query
+        user_data = callback_query.get('from', {})
+        
+        telegram_id = str(user_data.get('id', ''))
+        username = user_data.get('username')
+        first_name = user_data.get('first_name', '')
+        last_name = user_data.get('last_name', '')
+        language_code = user_data.get('language_code', 'en')
+        
+        if telegram_id:
+            # Store user interaction data
+            await store_user_interaction(telegram_id, username, first_name, last_name, language_code)
+        
+        # Handle callback data here if needed
+        callback_data = callback_query.get('data', '')
+        print(f"📞 Callback query from {telegram_id}: {callback_data}")
+        
+    except Exception as e:
+        print(f"Callback query error: {e}")

@@ -484,3 +484,29 @@ async def restart_telegram_polling():
             status_code=500,
             detail=f"Failed to restart polling: {str(e)}"
         )
+
+@router.post("/webhook/remove")
+async def remove_telegram_webhook():
+    """Remove Telegram webhook to fix polling conflicts"""
+    try:
+        from app.services.telegram_polling import telegram_poller
+        
+        # Remove webhook
+        await telegram_poller._remove_webhook()
+        
+        # Get webhook info to confirm removal
+        webhook_info = await telegram_poller.get_webhook_info()
+        
+        return {
+            "success": True,
+            "message": "Webhook removal attempted",
+            "webhook_info": webhook_info,
+            "has_webhook": bool(webhook_info and webhook_info.get('url')),
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to remove webhook: {str(e)}"
+        )

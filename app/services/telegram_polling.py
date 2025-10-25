@@ -20,6 +20,7 @@ class TelegramPollingService:
         self.running = False
         self.poll_interval = 2  # seconds
         self.timeout = 10  # seconds for long polling
+        self._polling_task = None  # Track the polling task
         
     async def get_updates(self) -> list:
         """Get updates from Telegram API"""
@@ -39,8 +40,17 @@ class TelegramPollingService:
                     if response.status == 200:
                         data = await response.json()
                         return data.get('result', [])
+                    elif response.status == 409:
+                        # Conflict error - likely webhook is still active or multiple polling instances
+                        error_text = await response.text()
+                        logger.warning(f"🔄 Telegram API 409 conflict: {error_text}")
+                        logger.info("Attempting to resolve conflict by removing webhook...")
+                        await self._remove_webhook()
+                        await asyncio.sleep(3)  # Wait before retry
+                        return []
                     else:
-                        logger.warning(f"Telegram API error: {response.status}")
+                        error_text = await response.text()
+                        logger.warning(f"Telegram API error {response.status}: {error_text}")
                         return []
         except asyncio.TimeoutError:
             # Timeout is expected with long polling
@@ -99,6 +109,13 @@ class TelegramPollingService:
             logger.warning("🔕 Telegram polling disabled: TELEGRAM_BOT_TOKEN not configured")
             return
         
+        if self.running:
+            logger.warning("📱 Telegram polling is already running")
+            return
+        
+        # First, remove any existing webhook to avoid 409 conflicts
+        await self._remove_webhook()
+        
         logger.info("📱 Starting Telegram polling service...")
         logger.info(f"🔗 Bot token: {self.bot_token[:10]}...")
         logger.info(f"📡 Polling interval: {self.poll_interval}s")
@@ -143,10 +160,49 @@ class TelegramPollingService:
     def stop_polling(self):
         """Stop the polling loop"""
         self.running = False
+        if self._polling_task and not self._polling_task.done():
+            self._polling_task.cancel()
+            logger.info("📱 Cancelled polling task")
     
     def is_running(self) -> bool:
         """Check if polling is active"""
         return self.running
+    
+    async def _remove_webhook(self):
+        """Remove any existing webhook to avoid conflicts with polling"""
+        try:
+            if not self.bot_token:
+                return
+            
+            url = f'https://api.telegram.org/bot{self.bot_token}/deleteWebhook'
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        logger.info("🗑️ Removed existing webhook for polling")
+                    else:
+                        logger.warning(f"Could not remove webhook: {response.status}")
+        except Exception as e:
+            logger.warning(f"Error removing webhook: {e}")
+    
+    async def get_webhook_info(self):
+        """Get current webhook information"""
+        try:
+            if not self.bot_token:
+                return None
+            
+            url = f'https://api.telegram.org/bot{self.bot_token}/getWebhookInfo'
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get('result', {})
+                    else:
+                        return None
+        except Exception as e:
+            logger.warning(f"Error getting webhook info: {e}")
+            return None
 
 # Global instance
 telegram_poller = TelegramPollingService()
@@ -155,7 +211,7 @@ async def start_telegram_polling():
     """Start Telegram polling in background"""
     if telegram_poller.bot_token:
         # Run polling in background task
-        asyncio.create_task(telegram_poller.start_polling())
+        telegram_poller._polling_task = asyncio.create_task(telegram_poller.start_polling())
         logger.info("✅ Telegram polling service started")
     else:
         logger.warning("⚠️  Telegram polling not started: Bot token not configured")
@@ -172,4 +228,18 @@ def get_polling_status() -> dict:
         "bot_token_configured": bool(telegram_poller.bot_token),
         "current_offset": telegram_poller.offset,
         "webhook_url": telegram_poller.webhook_url
+    }
+
+async def get_detailed_polling_status() -> dict:
+    """Get detailed polling status including webhook info"""
+    basic_status = get_polling_status()
+    
+    # Get webhook info
+    webhook_info = await telegram_poller.get_webhook_info()
+    
+    return {
+        **basic_status,
+        "webhook_info": webhook_info,
+        "has_active_webhook": bool(webhook_info and webhook_info.get('url')),
+        "pending_updates": webhook_info.get('pending_update_count', 0) if webhook_info else 0
     }

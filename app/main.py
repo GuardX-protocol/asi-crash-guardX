@@ -197,10 +197,66 @@ async def get_telegram_polling_status():
     """Get Telegram polling service status"""
     return get_polling_status()
 
+@app.get("/telegram/polling-status/detailed")
+async def get_detailed_telegram_polling_status():
+    """Get detailed Telegram polling service status including webhook info"""
+    from app.services.telegram_polling import get_detailed_polling_status
+    return await get_detailed_polling_status()
+
 @app.get("/monitor/service-status")
 async def get_monitor_service_status_endpoint():
     """Get monitor service status"""
     return get_monitor_service_status()
+
+@app.get("/telegram/user-stats")
+async def get_telegram_user_stats():
+    """Get Telegram user interaction statistics"""
+    from app.database import is_connected
+    from app.models import User
+    
+    try:
+        if not is_connected():
+            return {"error": "Database not available"}
+        
+        # Get all users with Telegram IDs
+        telegram_users = await User.find(User.telegramId != None).to_list()
+        
+        # Categorize users
+        real_wallet_users = [u for u in telegram_users if not u.walletAddress.startswith('tg_')]
+        temp_wallet_users = [u for u in telegram_users if u.walletAddress.startswith('tg_')]
+        
+        # Get recent interactions (last 24 hours)
+        from datetime import timedelta
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        recent_users = [u for u in telegram_users if u.lastLoginAt and u.lastLoginAt >= yesterday]
+        
+        # Get users with alerts enabled
+        alert_users = [u for u in telegram_users if u.notificationPreferences.get('telegram_alerts', False)]
+        
+        stats = {
+            "total_telegram_users": len(telegram_users),
+            "real_wallet_users": len(real_wallet_users),
+            "temp_wallet_users": len(temp_wallet_users),
+            "recent_interactions_24h": len(recent_users),
+            "users_with_alerts_enabled": len(alert_users),
+            "conversion_rate": round((len(real_wallet_users) / len(telegram_users) * 100), 2) if telegram_users else 0,
+            "sample_users": [
+                {
+                    "telegramId": u.telegramId,
+                    "username": u.username,
+                    "firstName": u.firstName,
+                    "walletType": "real" if not u.walletAddress.startswith('tg_') else "temporary",
+                    "alertsEnabled": u.notificationPreferences.get('telegram_alerts', False),
+                    "lastInteraction": u.lastLoginAt.isoformat() if u.lastLoginAt else None
+                } for u in telegram_users[:5]
+            ],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        return stats
+        
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/database/status")
 async def get_database_status():
