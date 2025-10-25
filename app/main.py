@@ -12,7 +12,16 @@ except ImportError as e:
     crash_sentinel = None
     CRASH_AGENT_AVAILABLE = False
 from app.services.telegram_polling import start_telegram_polling, stop_telegram_polling, get_polling_status
-from app.services.monitor_service import start_monitor_service, stop_monitor_service, get_monitor_service_status
+# Optional import for monitor service
+try:
+    from app.services.monitor_service import start_monitor_service, stop_monitor_service, get_monitor_service_status
+    MONITOR_SERVICE_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Monitor service not available: {e}")
+    start_monitor_service = lambda: None
+    stop_monitor_service = lambda: None
+    get_monitor_service_status = lambda: {"available": False, "error": "Dependencies not available"}
+    MONITOR_SERVICE_AVAILABLE = False
 import asyncio
 import logging
 import threading
@@ -48,8 +57,11 @@ agent_thread = None
 
 def run_agent():
     try:
-        logger.info("🤖 Starting Crash Sentinel Agent...")
-        crash_sentinel.run()
+        if CRASH_AGENT_AVAILABLE and crash_sentinel:
+            logger.info("🤖 Starting Crash Sentinel Agent...")
+            crash_sentinel.run()
+        else:
+            logger.warning("🤖 Crash Sentinel Agent not available")
     except Exception as e:
         logger.error(f"Agent error: {e}")
 
@@ -65,16 +77,23 @@ async def startup_event():
     else:
         logger.info("⚠️  Running without MongoDB - In-memory mode")
     
-    # Start crash detection agent
-    agent_thread = threading.Thread(target=run_agent, daemon=True)
-    agent_thread.start()
-    logger.info("🤖 Crash Sentinel Agent started in background")
+    # Start crash detection agent (optional)
+    if CRASH_AGENT_AVAILABLE:
+        agent_thread = threading.Thread(target=run_agent, daemon=True)
+        agent_thread.start()
+        logger.info("🤖 Crash Sentinel Agent started in background")
+    else:
+        logger.info("🤖 Crash Sentinel Agent disabled (dependencies not available)")
     
     # Start Telegram polling service
     await start_telegram_polling()
     
-    # Start monitor service
-    await start_monitor_service()
+    # Start monitor service (if available)
+    if MONITOR_SERVICE_AVAILABLE:
+        await start_monitor_service()
+        logger.info("🔍 Monitor service started")
+    else:
+        logger.info("🔍 Monitor service disabled (dependencies not available)")
     
     logger.info("🚀 Application startup complete")
 
@@ -86,7 +105,8 @@ async def shutdown_event():
     stop_telegram_polling()
     
     # Stop monitor service
-    stop_monitor_service()
+    if MONITOR_SERVICE_AVAILABLE:
+        stop_monitor_service()
     
     # Close MongoDB connection
     await close_mongo_connection()
@@ -114,14 +134,22 @@ def test():
 @app.get("/agent/status")
 async def get_agent_status():
     """Get the status of communication with the target agent"""
-    from app.agents.crash_detector import get_pending_requests, get_latest_agent_response
+    if not CRASH_AGENT_AVAILABLE:
+        return {
+            "agent_available": False,
+            "message": "Crash agent not available (missing dependencies)",
+            "asi_available": os.getenv('ASI_API_KEY') is not None
+        }
     
     try:
+        from app.agents.crash_detector import get_pending_requests, get_latest_agent_response
+        
         pending_requests = get_pending_requests()
         latest_response = get_latest_agent_response()
         
         return {
-            "agent_address": crash_sentinel.address,
+            "agent_available": True,
+            "agent_address": crash_sentinel.address if crash_sentinel else None,
             "pending_requests_count": len(pending_requests),
             "pending_requests": pending_requests,
             "latest_response": latest_response,
@@ -133,9 +161,11 @@ async def get_agent_status():
 @app.get("/agent/latest-response")
 async def get_latest_agent_response_endpoint():
     """Get the latest response from the target agent"""
-    from app.agents.crash_detector import get_latest_agent_response
+    if not CRASH_AGENT_AVAILABLE:
+        return {"message": "Crash agent not available"}
     
     try:
+        from app.agents.crash_detector import get_latest_agent_response
         return get_latest_agent_response() or {"message": "No responses received yet"}
     except Exception as e:
         return {"error": str(e)}
@@ -146,7 +176,8 @@ async def get_latest_agent_response_endpoint():
 async def get_agent_info():
     """Get information about the GuardX agent"""
     return {
-        "agent_address": crash_sentinel.address,
+        "agent_available": CRASH_AGENT_AVAILABLE,
+        "agent_address": crash_sentinel.address if CRASH_AGENT_AVAILABLE and crash_sentinel else None,
         "detection_method": "Prophet + ARIMA + Anomaly Detection",
         "analysis_method": "ASI Model Integration",
         "mode": "Standalone - No external agents needed",
@@ -155,7 +186,9 @@ async def get_agent_info():
             "Training-free crash detection",
             "ASI-powered explanations", 
             "User chat support",
-            "Real-time monitoring"
+            "Real-time monitoring",
+            "Telegram integration",
+            "Multi-wallet support"
         ]
     }
 
