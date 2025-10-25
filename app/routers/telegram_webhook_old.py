@@ -357,14 +357,11 @@ Or type 'skip' to use a temporary address."""
         # Check if wallet address already exists
         existing_user_with_wallet = None
         
-        if is_connected():
-            existing_user_with_wallet = await User.find_one(User.walletAddress == wallet_input)
-        else:
-            users = await fallback_storage.get_users()
-            for user in users:
-                if getattr(user, 'walletAddress', None) == wallet_input:
-                    existing_user_with_wallet = user
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        existing_user_with_wallet = await User.find_one(User.walletAddress == wallet_input)
         
         if existing_user_with_wallet and existing_user_with_wallet.telegramId != telegram_id:
             error_message = f"""❌ This wallet address is already registered to another account.
@@ -409,11 +406,12 @@ async def create_user_with_temp_wallet(telegram_id: str, user_data: Dict[str, An
             'updatedAt': datetime.utcnow()
         }
         
-        if is_connected():
-            new_user = User(**user_create_data)
-            await new_user.insert()
-        else:
-            await fallback_storage.create_user(user_create_data)
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        new_user = User(**user_create_data)
+        await new_user.insert()
         
         message = f"""✅ Account created with temporary address!
 
@@ -442,15 +440,11 @@ async def create_or_update_user_with_wallet(telegram_id: str, wallet_address: st
         wallet_type = get_wallet_type(wallet_address)
         
         # Check if this is an update to existing user
-        existing_user = None
-        if is_connected():
-            existing_user = await User.find_one(User.telegramId == telegram_id)
-        else:
-            users = await fallback_storage.get_users()
-            for user in users:
-                if getattr(user, 'telegramId', None) == telegram_id:
-                    existing_user = user
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        existing_user = await User.find_one(User.telegramId == telegram_id)
         
         if existing_user:
             # Update existing user's wallet address
@@ -469,10 +463,7 @@ async def create_or_update_user_with_wallet(telegram_id: str, wallet_address: st
                 }
             }
             
-            if is_connected():
-                await existing_user.update({"$set": update_data})
-            else:
-                await fallback_storage.update_user(existing_user.walletAddress, update_data)
+            await existing_user.update({"$set": update_data})
             
             message = f"""✅ Wallet address updated successfully!
 
@@ -508,11 +499,8 @@ Type /status to see your account details."""
                 'updatedAt': datetime.utcnow()
             }
             
-            if is_connected():
-                new_user = User(**user_create_data)
-                await new_user.insert()
-            else:
-                await fallback_storage.create_user(user_create_data)
+            new_user = User(**user_create_data)
+            await new_user.insert()
             
             message = f"""🎉 Welcome to GuardX, {user_data.get('firstName', 'User')}!
 
@@ -573,16 +561,11 @@ Or type 'cancel' to keep your current address."""
             return
         
         # Check if wallet address already exists for another user
-        existing_user_with_wallet = None
-        
-        if is_connected():
-            existing_user_with_wallet = await User.find_one(User.walletAddress == wallet_input)
-        else:
-            users = await fallback_storage.get_users()
-            for user in users:
-                if getattr(user, 'walletAddress', None) == wallet_input:
-                    existing_user_with_wallet = user
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        existing_user_with_wallet = await User.find_one(User.walletAddress == wallet_input)
         
         if existing_user_with_wallet and existing_user_with_wallet.telegramId != telegram_id:
             error_message = f"""❌ This wallet address is already registered to another account.
@@ -595,15 +578,11 @@ Wallet: `{wallet_input[:10]}...{wallet_input[-6:]}`"""
             return
         
         # Update user's wallet address
-        current_user = None
-        if is_connected():
-            current_user = await User.find_one(User.telegramId == telegram_id)
-        else:
-            users = await fallback_storage.get_users()
-            for user in users:
-                if getattr(user, 'telegramId', None) == telegram_id:
-                    current_user = user
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        current_user = await User.find_one(User.telegramId == telegram_id)
         
         if not current_user:
             await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send /start to register.")
@@ -619,10 +598,7 @@ Wallet: `{wallet_input[:10]}...{wallet_input[-6:]}`"""
             'updatedAt': datetime.utcnow()
         }
         
-        if is_connected():
-            await current_user.update({"$set": update_data})
-        else:
-            await fallback_storage.update_user(old_wallet, update_data)
+        await current_user.update({"$set": update_data})
         
         success_message = f"""✅ Wallet address updated successfully!
 
@@ -649,16 +625,11 @@ async def toggle_user_alerts(telegram_id: str, enable: bool):
     """Toggle telegram alerts for a user"""
     try:
         # Find user by telegram ID
-        user = None
-        
-        if is_connected():
-            user = await User.find_one(User.telegramId == telegram_id)
-        else:
-            users = await fallback_storage.get_users()
-            for u in users:
-                if getattr(u, 'telegramId', None) == telegram_id:
-                    user = u
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        user = await User.find_one(User.telegramId == telegram_id)
         
         if not user:
             await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send /start to register first.")
@@ -673,10 +644,7 @@ async def toggle_user_alerts(telegram_id: str, enable: bool):
             'updatedAt': datetime.utcnow()
         }
         
-        if is_connected():
-            await user.update({"$set": update_data})
-        else:
-            await fallback_storage.update_user(user.walletAddress, update_data)
+        await user.update({"$set": update_data})
         
         status = "ENABLED ✅" if enable else "DISABLED ❌"
         emoji = "🔔" if enable else "🔕"
@@ -700,16 +668,11 @@ async def handle_wallet_command(telegram_id: str, username: str, first_name: str
     """Handle /wallet command to update wallet address"""
     try:
         # Check if user exists
-        user = None
-        
-        if is_connected():
-            user = await User.find_one(User.telegramId == telegram_id)
-        else:
-            users = await fallback_storage.get_users()
-            for u in users:
-                if getattr(u, 'telegramId', None) == telegram_id:
-                    user = u
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        user = await User.find_one(User.telegramId == telegram_id)
         
         if not user:
             await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send /start to register first.")
@@ -785,37 +748,24 @@ async def send_status_message(telegram_id: str):
     """Send user status information"""
     try:
         # Find user by telegram ID
-        user = None
-        
-        if is_connected():
-            # Use MongoDB
-            user = await User.find_one(User.telegramId == telegram_id)
-        else:
-            # Use fallback storage
-            users = await fallback_storage.get_users()
-            for u in users:
-                if getattr(u, 'telegramId', None) == telegram_id:
-                    user = u
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        user = await User.find_one(User.telegramId == telegram_id)
         
         if not user:
             await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send /start to register.")
             return
         
         # Get user's monitors
-        if is_connected():
-            from app.models import Monitor, MonitorAlert
-            monitors = await Monitor.find(Monitor.userId == user.walletAddress).to_list()
-            active_monitors = [m for m in monitors if m.enabled]
-            recent_alerts = await MonitorAlert.find(
-                MonitorAlert.userId == user.walletAddress,
-                MonitorAlert.createdAt >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-            ).to_list()
-        else:
-            monitors = await fallback_storage.get_monitors(user.walletAddress)
-            active_monitors = [m for m in monitors if m.enabled]
-            all_alerts = await fallback_storage.get_alerts(user_id=user.walletAddress)
-            recent_alerts = [a for a in all_alerts if (datetime.utcnow() - a.createdAt).days == 0]
+        from app.models import Monitor, MonitorAlert
+        monitors = await Monitor.find(Monitor.userId == user.walletAddress).to_list()
+        active_monitors = [m for m in monitors if m.enabled]
+        recent_alerts = await MonitorAlert.find(
+            MonitorAlert.userId == user.walletAddress,
+            MonitorAlert.createdAt >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        ).to_list()
         
         # Get notification preferences
         prefs = getattr(user, 'notificationPreferences', {})
@@ -860,16 +810,11 @@ async def send_settings_message(telegram_id: str):
     """Send user settings and preferences"""
     try:
         # Find user by telegram ID
-        user = None
-        
-        if is_connected():
-            user = await User.find_one(User.telegramId == telegram_id)
-        else:
-            users = await fallback_storage.get_users()
-            for u in users:
-                if getattr(u, 'telegramId', None) == telegram_id:
-                    user = u
-                    break
+        if not is_connected():
+            await send_telegram_message_direct(telegram_id, "❌ Database not available. Please try again later.")
+            return
+            
+        user = await User.find_one(User.telegramId == telegram_id)
         
         if not user:
             await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send /start to register.")

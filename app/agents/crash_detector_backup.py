@@ -254,30 +254,7 @@ Keep response under 200 words, be direct and actionable."""
 def save_alert_to_storage_sync(alert_data):
     """Save alert to storage synchronously to avoid event loop conflicts"""
     try:
-        from app.services.fallback_storage import fallback_storage
-        
-        alert_dict = {
-            "monitorId": "crash_sentinel_global",
-            "userId": "system",
-            "symbol": alert_data['symbol'],
-            "alertType": "crash_detection",
-            "crash_probability": alert_data['probability'],
-            "current_price": alert_data.get('current_price', 0),
-            "agent_analysis": alert_data.get('agent_analysis', ''),
-            "technical_indicators": alert_data.get('evidence', {}),
-            "severity": alert_data.get('severity', 'MEDIUM'),
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        # Use only synchronous fallback storage
-        try:
-            alerts = fallback_storage._storage.get('alerts', [])
-            alerts.append(alert_dict)
-            fallback_storage._storage['alerts'] = alerts
-            print(f"✅ Alert saved to storage for {alert_data['symbol']}")
-        except Exception as storage_error:
-            print(f"Storage save error: {storage_error}")
-            
+        print(f"⚠️ Database not available - alert not saved for {alert_data['symbol']}")
     except Exception as e:
         print(f"Failed to save alert: {e}")
 
@@ -288,24 +265,9 @@ async def save_alert_to_db(alert_data):
 def get_active_monitor_symbols_sync():
     """Get active monitor symbols synchronously to avoid event loop conflicts"""
     try:
-        from app.services.fallback_storage import fallback_storage
-        
-        symbols = set()
-        
-        # Use only synchronous fallback storage to avoid async loop issues
-        try:
-            monitors_data = fallback_storage._storage.get('monitors', [])
-            for monitor_data in monitors_data:
-                if monitor_data.get('enabled', False):
-                    symbols.update(monitor_data.get('symbols', []))
-        except Exception as storage_error:
-            print(f"Storage access error: {storage_error}")
-        
-        if not symbols:
-            # Return default symbols if no monitors found
-            return ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT', 'XRPUSDT']
-        
-        return [s + 'USDT' if not s.endswith('USDT') else s for s in symbols]
+        print("⚠️ Database not available - using default symbols")
+        # Return default symbols since database is not available
+        return ['BTCUSDT', 'ETHUSDT', 'ADAUSDT', 'SOLUSDT', 'XRPUSDT']
     except Exception as e:
         print(f"Error getting monitor symbols: {e}")
         # Return default symbols on any error

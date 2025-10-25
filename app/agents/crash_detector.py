@@ -236,24 +236,28 @@ crash_sentinel.include(chat_protocol)
 async def get_active_monitors_with_symbols():
     """Get active monitors with their symbols and user info"""
     try:
-        from app.services.fallback_storage import fallback_storage
+        from app.database import is_connected
+        from app.models import Monitor
         
-        monitors = await fallback_storage.get_monitors()
+        if not is_connected():
+            print("Database not connected")
+            return []
+            
+        monitors = await Monitor.find(Monitor.enabled == True).to_list()
         active_monitors = []
         
         for monitor in monitors:
-            if monitor.enabled:
-                # Ensure symbols have USDT suffix
-                symbols = [s + 'USDT' if not s.endswith('USDT') else s for s in monitor.symbols]
-                active_monitors.append({
-                    'name': monitor.name,
-                    'userId': monitor.userId,
-                    'symbols': symbols,
-                    'crash_probability_threshold': getattr(monitor, 'crash_probability_threshold', 60.0),
-                    'telegram_alerts': getattr(monitor, 'telegram_alerts', False),
-                    'email_alerts': getattr(monitor, 'email_alerts', False),
-                    'alert_webhooks': getattr(monitor, 'alert_webhooks', [])
-                })
+            # Ensure symbols have USDT suffix
+            symbols = [s + 'USDT' if not s.endswith('USDT') else s for s in monitor.symbols]
+            active_monitors.append({
+                'name': monitor.name,
+                'userId': monitor.userId,
+                'symbols': symbols,
+                'crash_probability_threshold': getattr(monitor, 'crash_probability_threshold', 60.0),
+                'telegram_alerts': getattr(monitor, 'telegram_alerts', False),
+                'email_alerts': getattr(monitor, 'email_alerts', False),
+                'alert_webhooks': getattr(monitor, 'alert_webhooks', [])
+            })
         
         return active_monitors
     except Exception as e:
@@ -279,8 +283,14 @@ async def get_active_monitor_symbols():
 async def get_user_telegram_id(user_id: str):
     """Get user's Telegram ID for notifications"""
     try:
-        from app.services.fallback_storage import fallback_storage
-        user = await fallback_storage.get_user(user_id)
+        from app.database import is_connected
+        from app.models import User
+        
+        if not is_connected():
+            print("Database not connected")
+            return None
+            
+        user = await User.find_one(User.walletAddress == user_id)
         return getattr(user, 'telegramId', None) if user else None
     except Exception as e:
         print(f"Error getting user telegram ID: {e}")
@@ -323,8 +333,13 @@ def serialize_for_json(obj):
 async def save_alert_to_storage(alert_data):
     """Save alert to storage with proper JSON serialization"""
     try:
-        from app.services.fallback_storage import fallback_storage
+        from app.database import is_connected
+        from app.models import MonitorAlert
         
+        if not is_connected():
+            print("Database not connected - cannot save alert")
+            return
+            
         # Ensure all data is JSON serializable
         alert_dict = {
             "monitorId": alert_data.get('monitorId', 'crash_sentinel_global'),
@@ -335,10 +350,12 @@ async def save_alert_to_storage(alert_data):
             "current_price": float(alert_data.get('current_price', 0)),
             "asi_analysis": str(alert_data.get('agent_analysis', '')),
             "technical_indicators": serialize_for_json(alert_data.get('evidence', {})),
-            "severity": str(alert_data.get('severity', 'MEDIUM'))
+            "severity": str(alert_data.get('severity', 'MEDIUM')),
+            "createdAt": datetime.utcnow()
         }
         
-        await fallback_storage.create_alert(alert_dict)
+        new_alert = MonitorAlert(**alert_dict)
+        await new_alert.insert()
         print(f"✅ Alert saved to storage for {alert_data['symbol']}")
         
     except Exception as e:

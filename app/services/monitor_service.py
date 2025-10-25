@@ -10,7 +10,6 @@ from typing import Dict, List, Optional, Any
 import json
 from app.database import is_connected
 from app.models import Monitor, MonitorAlert, User
-from app.services.fallback_storage import fallback_storage
 from app.services.prophet_crash_detector import ProphetCrashDetector
 
 logger = logging.getLogger(__name__)
@@ -87,12 +86,11 @@ class MonitorService:
     async def _get_active_monitors(self) -> List[Monitor]:
         """Get all active monitors from database"""
         try:
-            if is_connected():
-                monitors = await Monitor.find(Monitor.enabled == True).to_list()
-            else:
-                all_monitors = await fallback_storage.get_monitors()
-                monitors = [m for m in all_monitors if getattr(m, 'enabled', False)]
-            
+            if not is_connected():
+                logger.error("Database not connected")
+                return []
+                
+            monitors = await Monitor.find(Monitor.enabled == True).to_list()
             return monitors
         except Exception as e:
             logger.error(f"Error getting active monitors: {e}")
@@ -250,12 +248,13 @@ class MonitorService:
             }
             
             # Save alert to database
-            if is_connected():
-                new_alert = MonitorAlert(**alert_record)
-                await new_alert.insert()
-                alert_id = str(new_alert.id)
-            else:
-                alert_id = await fallback_storage.create_alert(alert_record)
+            if not is_connected():
+                logger.error("Database not connected - cannot save alert")
+                return
+                
+            new_alert = MonitorAlert(**alert_record)
+            await new_alert.insert()
+            alert_id = str(new_alert.id)
             
             # Send Telegram alert if enabled
             if getattr(monitor, 'telegram_alerts', False):
@@ -340,13 +339,14 @@ class MonitorService:
     async def _update_alert_status(self, alert_id: str, field: str, value: bool):
         """Update alert delivery status"""
         try:
-            if is_connected():
-                from bson import ObjectId
-                alert = await MonitorAlert.find_one(MonitorAlert.id == ObjectId(alert_id))
-                if alert:
-                    await alert.update({"$set": {field: value}})
-            else:
-                await fallback_storage.update_alert(alert_id, {field: value})
+            if not is_connected():
+                logger.error("Database not connected - cannot update alert status")
+                return
+                
+            from bson import ObjectId
+            alert = await MonitorAlert.find_one(MonitorAlert.id == ObjectId(alert_id))
+            if alert:
+                await alert.update({"$set": {field: value}})
         except Exception as e:
             logger.error(f"Error updating alert status: {e}")
     
