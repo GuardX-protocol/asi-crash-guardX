@@ -129,7 +129,8 @@ async def simulate_complete_flow():
                     print(f"\n   📧 Sending Email Alert...")
                     
                     email_summary = formatted.get('email_summary', 'ASI analysis available')
-                    test_email = email_service.email_user  # Send to configured email
+                    # Use a proper test recipient email instead of sender email
+                    test_email = "manicdon7@gmail.com"  # This should be the user's email
                     
                     email_success = await email_service.send_crash_alert(
                         test_email,

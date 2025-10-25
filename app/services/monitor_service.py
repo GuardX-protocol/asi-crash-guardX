@@ -413,19 +413,30 @@ class EnhancedMonitorService:
             price_drop_percent = abs(crash_result.get("price_drop_24h", 0))
             price_before_crash = current_price / (1 - price_drop_percent / 100) if price_drop_percent > 0 else current_price
             
+            # Convert technical indicators to JSON-serializable format
+            technical_indicators = crash_result.get("technical_signals", {})
+            clean_technical_indicators = {}
+            for key, value in technical_indicators.items():
+                if hasattr(value, 'item'):  # numpy scalar
+                    clean_technical_indicators[key] = value.item()
+                elif isinstance(value, (bool, int, float, str)):
+                    clean_technical_indicators[key] = value
+                else:
+                    clean_technical_indicators[key] = str(value)
+            
             # Create comprehensive alert record
             alert = MonitorAlert(
                 monitorId=str(monitor.id),
                 userId=monitor.userId,  # This is now the wallet address
                 symbol=symbol,
                 token_name=token_name,
-                crash_probability=crash_result.get("crash_probability", 0),
-                current_price=current_price,
-                price_drop=abs(crash_result.get("price_drop_24h", 0)),
-                price_before_crash=price_before_crash,
+                crash_probability=float(crash_result.get("crash_probability", 0)),
+                current_price=float(current_price),
+                price_drop=float(abs(crash_result.get("price_drop_24h", 0))),
+                price_before_crash=float(price_before_crash),
                 analysis=analysis_text,
                 crash_detected_at=datetime.utcnow(),
-                technical_indicators=crash_result.get("technical_signals", {}),
+                technical_indicators=clean_technical_indicators,
                 asi_analysis=asi_analysis.get("raw_analysis") if asi_analysis else None,
                 confidence_level=crash_result.get("confidence_level", "medium"),
                 notification_sent=False,
