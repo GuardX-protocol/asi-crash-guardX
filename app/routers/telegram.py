@@ -425,14 +425,15 @@ async def get_users_with_telegram_alerts():
     """Get all users who have Telegram alerts enabled"""
     try:
         from app.models import User
-        from app.database import is_connected
+        from app.database import ensure_connection
         
-        if not is_connected():
+        # Ensure database connection
+        if not await ensure_connection():
             raise HTTPException(status_code=503, detail="Database not available")
         
         users_with_alerts = []
         
-        # Use MongoDB
+        # Use MongoDB with proper error handling
         users = await User.find_all().to_list()
         for user in users:
             prefs = getattr(user, 'notificationPreferences', {})
@@ -451,6 +452,8 @@ async def get_users_with_telegram_alerts():
             "timestamp": datetime.now().isoformat()
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,

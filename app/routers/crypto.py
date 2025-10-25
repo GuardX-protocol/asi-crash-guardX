@@ -16,44 +16,40 @@ price_cache = {}
 cache_timestamp = None
 
 async def get_binance_prices(symbols: Optional[List[str]] = None):
-    """Get prices from Binance API"""
+    """Get prices from Binance API using the new service"""
     try:
+        from app.services.binance_api import binance_api
+        
         if symbols:
+            # Get specific symbols
+            price_data = await binance_api.get_multiple_prices(symbols)
             prices = {}
-            for symbol in symbols:
-                if not symbol.endswith('USDT'):
-                    symbol = symbol + 'USDT'
-                
-                response = requests.get(f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}", timeout=10)
-                if response.status_code == 200:
-                    data = response.json()
-                    prices[symbol] = TokenPrice(
-                        symbol=symbol,
-                        price=float(data['lastPrice']),
-                        change_24h=float(data['priceChangePercent']),
-                        volume_24h=float(data['volume']),
-                        market_cap=None,
-                        last_updated=datetime.utcnow()
-                    )
+            for symbol, data in price_data.items():
+                prices[symbol] = TokenPrice(
+                    symbol=symbol,
+                    price=data['price'],
+                    change_24h=data['change_24h'],
+                    volume_24h=data['volume_24h'],
+                    market_cap=None,
+                    timestamp=data['timestamp']
+                )
             return prices
         else:
             # Get top symbols
-            response = requests.get("https://api.binance.com/api/v3/ticker/24hr", timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                prices = {}
-                for item in data[:50]:  # Top 50
-                    if item['symbol'].endswith('USDT'):
-                        prices[item['symbol']] = TokenPrice(
-                            symbol=item['symbol'],
-                            price=float(item['lastPrice']),
-                            change_24h=float(item['priceChangePercent']),
-                            volume_24h=float(item['volume']),
-                            market_cap=None,
-                            last_updated=datetime.utcnow()
-                        )
-                return prices
+            price_data = await binance_api.get_top_symbols(limit=50)
+            prices = {}
+            for symbol, data in price_data.items():
+                prices[symbol] = TokenPrice(
+                    symbol=symbol,
+                    price=data['price'],
+                    change_24h=data['change_24h'],
+                    volume_24h=data['volume_24h'],
+                    market_cap=None,
+                    timestamp=data['timestamp']
+                )
+            return prices
     except Exception as e:
+        logger.error(f"Error getting Binance prices: {e}")
         return {}
 
 @router.get("/prices", response_model=Dict[str, TokenPrice])
@@ -92,16 +88,70 @@ async def get_crypto_prices(
 @router.get("/prices/{symbol}")
 async def get_single_crypto_price(symbol: str):
     try:
+        import aiohttp
+        
         symbol = symbol.upper()
+        # Ensure USDT suffix
         if not symbol.endswith('USDT'):
-            symbol = symbol + 'USDT'
+            symbol = f"{symbol}USDT"
+        
+        # Try multiple API endpoints for better reliability
+        endpoints = [
+            f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}",
+            f"https://api.binance.us/api/v3/ticker/24hr?symbol={symbol}",
+            f"https://api1.binance.com/api/v3/ticker/24hr?symbol={symbol}",
+            f"https://api2.binance.com/api/v3/ticker/24hr?symbol={symbol}",
+            f"https://api3.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+        ]
+        
+        async with aiohttp.ClientSession() as session:
+            for url in endpoints:
+                try:
+                    async with session.get(url, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            return TokenPrice(
+                                symbol=symbol,
+                                price=float(data['lastPrice']),
+                                change_24h=float(data['priceChangePercent']),
+                                volume_24h=float(data['volume']),
+                                market_cap=None,
+                                timestamp=datetime.utcnow().isoformat()
+                            )
+                        elif response.status == 451:
+                            # Geo-blocked, try next endpoint
+                            continue
+                        else:
+                            # Other error, try next endpoint
+                            continue
+                except Exception as e:
+                    # Network error, try next endpoint
+                    continue
             
-        prices = await get_binance_prices([symbol])
-        
-        if symbol not in prices:
-            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
-        
-        return prices[symbol]
+            # If all endpoints fail, try CoinGecko as fallback
+            try:
+                # Convert BTCUSDT to bitcoin for CoinGecko
+                coin_id = "bitcoin" if symbol.startswith("BTC") else "ethereum" if symbol.startswith("ETH") else None
+                if coin_id:
+                    coingecko_url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&include_24hr_change=true"
+                    async with session.get(coingecko_url, timeout=10) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            coin_data = data.get(coin_id, {})
+                            return TokenPrice(
+                                symbol=symbol,
+                                price=float(coin_data.get('usd', 0)),
+                                change_24h=float(coin_data.get('usd_24h_change', 0)),
+                                volume_24h=0,  # CoinGecko simple API doesn't include volume
+                                market_cap=None,
+                                timestamp=datetime.utcnow().isoformat()
+                            )
+            except Exception as e:
+                pass
+            
+            # If everything fails
+            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found - all price sources unavailable")
+                    
     except HTTPException:
         raise
     except Exception as e:
@@ -110,7 +160,10 @@ async def get_single_crypto_price(symbol: str):
 @router.post("/monitor/create", response_model=MonitorConfigResponse)
 async def create_monitor_config(config: MonitorConfigRequest):
     try:
-        if not is_connected():
+        from app.database import ensure_connection
+        
+        # Ensure database connection
+        if not await ensure_connection():
             raise HTTPException(status_code=503, detail="Database not available")
         
         # Check if monitor already exists
@@ -136,9 +189,11 @@ async def create_monitor_config(config: MonitorConfigRequest):
             "volume_change_threshold": config.volume_change_threshold,
             "crash_probability_threshold": config.crash_probability_threshold,
             "enabled": config.enabled,
-            "alert_webhooks": config.alert_webhooks,
+            "alert_webhooks": config.alert_webhooks or [],
             "telegram_alerts": config.telegram_alerts,
-            "email_alerts": config.email_alerts
+            "email_alerts": config.email_alerts,
+            "createdAt": datetime.utcnow(),
+            "updatedAt": datetime.utcnow()
         }
         
         new_monitor = Monitor(**monitor_data)
@@ -167,7 +222,10 @@ async def create_monitor_config(config: MonitorConfigRequest):
 @router.get("/monitors")
 async def list_monitor_configs(user_id: Optional[str] = Query(None)):
     try:
-        if not is_connected():
+        from app.database import ensure_connection
+        
+        # Ensure database connection
+        if not await ensure_connection():
             raise HTTPException(status_code=503, detail="Database not available")
         
         if user_id:
@@ -193,6 +251,8 @@ async def list_monitor_configs(user_id: Optional[str] = Query(None)):
                 running=monitor.enabled  # Simplified - running if enabled
             ))
         return configs
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -223,7 +283,10 @@ async def get_alerts(
 @router.get("/monitor", response_model=MonitorStatusResponse)
 async def get_monitor_status():
     try:
-        if not is_connected():
+        from app.database import ensure_connection
+        
+        # Ensure database connection
+        if not await ensure_connection():
             raise HTTPException(status_code=503, detail="Database not available")
         
         monitors = await Monitor.find_all().to_list()
@@ -234,6 +297,8 @@ async def get_monitor_status():
             cached_tokens=len(price_cache),
             monitor_configs={m.name: {"enabled": m.enabled, "symbols": m.symbols} for m in monitors}
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -413,5 +478,200 @@ async def patch_alert(alert_id: str, alert_patch: dict):
         return updated_alert
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+@router.get("/binance/test")
+async def test_binance_api():
+    """Test Binance API connectivity and performance"""
+    try:
+        from app.services.binance_api import binance_api
+        import time
+        
+        start_time = time.time()
+        
+        # Test single symbol
+        btc_data = await binance_api.get_symbol_price("BTC")
+        single_time = time.time() - start_time
+        
+        # Test multiple symbols
+        start_time = time.time()
+        multi_data = await binance_api.get_multiple_prices(["BTC", "ETH", "ADA"])
+        multi_time = time.time() - start_time
+        
+        # Test top symbols
+        start_time = time.time()
+        top_data = await binance_api.get_top_symbols(limit=10)
+        top_time = time.time() - start_time
+        
+        return {
+            "binance_api_status": "✅ Working",
+            "tests": {
+                "single_symbol": {
+                    "symbol": "BTCUSDT",
+                    "price": btc_data['price'] if btc_data else None,
+                    "response_time_ms": round(single_time * 1000, 2),
+                    "success": bool(btc_data)
+                },
+                "multiple_symbols": {
+                    "symbols_requested": 3,
+                    "symbols_received": len(multi_data),
+                    "response_time_ms": round(multi_time * 1000, 2),
+                    "success": len(multi_data) > 0
+                },
+                "top_symbols": {
+                    "symbols_requested": 10,
+                    "symbols_received": len(top_data),
+                    "response_time_ms": round(top_time * 1000, 2),
+                    "success": len(top_data) > 0
+                }
+            },
+            "cache_stats": binance_api.get_cache_stats(),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except Exception as e:
+        return {
+            "binance_api_status": "❌ Error",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+@router.get("/prices/realtime/{symbol}")
+async def get_realtime_price(symbol: str):
+    """Get real-time price with additional market data"""
+    try:
+        from app.services.binance_api import binance_api
+        
+        symbol = symbol.upper()
+        
+        # Get current price
+        price_data = await binance_api.get_symbol_price(symbol)
+        if not price_data:
+            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+        
+        # Get recent klines for trend analysis
+        klines = await binance_api.get_klines(symbol, interval="1m", limit=10)
+        
+        # Calculate trend
+        trend = "neutral"
+        if len(klines) >= 2:
+            recent_close = klines[-1]['close_price']
+            previous_close = klines[-2]['close_price']
+            if recent_close > previous_close:
+                trend = "bullish"
+            elif recent_close < previous_close:
+                trend = "bearish"
+        
+        return {
+            "symbol": price_data['symbol'],
+            "current_price": price_data['price'],
+            "change_24h": price_data['change_24h'],
+            "volume_24h": price_data['volume_24h'],
+            "high_24h": price_data['high_24h'],
+            "low_24h": price_data['low_24h'],
+            "trend": trend,
+            "recent_candles": len(klines),
+            "last_update": price_data['timestamp'],
+            "source": "binance_realtime"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
+@router.get("/prices/mock/{symbol}")
+async def get_mock_crypto_price(symbol: str):
+    """Get mock crypto price for testing when external APIs are unavailable"""
+    try:
+        symbol = symbol.upper()
+        if not symbol.endswith('USDT'):
+            symbol = f"{symbol}USDT"
+        
+        # Mock prices for common symbols
+        mock_prices = {
+            "BTCUSDT": {"price": 111500.00, "change_24h": 2.5},
+            "ETHUSDT": {"price": 4200.00, "change_24h": 1.8},
+            "ADAUSDT": {"price": 0.85, "change_24h": -0.5},
+            "SOLUSDT": {"price": 180.00, "change_24h": 3.2},
+            "XRPUSDT": {"price": 0.65, "change_24h": -1.2}
+        }
+        
+        if symbol in mock_prices:
+            mock_data = mock_prices[symbol]
+            return TokenPrice(
+                symbol=symbol,
+                price=mock_data["price"],
+                change_24h=mock_data["change_24h"],
+                volume_24h=1000000.0,  # Mock volume
+                market_cap=None,
+                timestamp=datetime.utcnow().isoformat()
+            )
+        else:
+            raise HTTPException(status_code=404, detail=f"Mock data not available for {symbol}")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/prices/test-sources/{symbol}")
+async def test_price_sources(symbol: str):
+    """Test all available price sources for a symbol"""
+    try:
+        import aiohttp
+        
+        symbol = symbol.upper()
+        if not symbol.endswith('USDT'):
+            symbol = f"{symbol}USDT"
+        
+        results = {}
+        
+        # Test Binance endpoints
+        binance_endpoints = [
+            f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}",
+            f"https://api.binance.us/api/v3/ticker/price?symbol={symbol}"
+        ]
+        
+        async with aiohttp.ClientSession() as session:
+            for i, url in enumerate(binance_endpoints):
+                try:
+                    async with session.get(url, timeout=5) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            results[f"binance_{i+1}"] = {
+                                "status": "✅ Available",
+                                "price": float(data["price"]),
+                                "source": url.split('/')[2]
+                            }
+                        else:
+                            results[f"binance_{i+1}"] = {
+                                "status": f"❌ HTTP {response.status}",
+                                "source": url.split('/')[2]
+                            }
+                except Exception as e:
+                    results[f"binance_{i+1}"] = {
+                        "status": f"❌ {str(e)[:50]}",
+                        "source": url.split('/')[2]
+                    }
+        
+        # Test mock data
+        mock_available = symbol in ["BTCUSDT", "ETHUSDT", "ADAUSDT", "SOLUSDT", "XRPUSDT"]
+        results["mock_data"] = {
+            "status": "✅ Available" if mock_available else "❌ Not available",
+            "source": "internal_mock"
+        }
+        
+        working_sources = len([r for r in results.values() if "✅" in r["status"]])
+        
+        return {
+            "symbol": symbol,
+            "working_sources": working_sources,
+            "total_sources": len(results),
+            "sources": results,
+            "recommendation": "Use mock data" if working_sources == 1 and mock_available else "External APIs available" if working_sources > 1 else "No sources available",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

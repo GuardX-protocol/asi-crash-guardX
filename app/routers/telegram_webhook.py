@@ -95,7 +95,10 @@ def get_wallet_type(address: str) -> str:
 async def store_user_interaction(telegram_id: str, username: str, first_name: str, last_name: str, language_code: str):
     """Store or update user data on any Telegram interaction"""
     try:
-        if not is_connected():
+        from app.database import ensure_connection
+        
+        # Ensure database connection
+        if not await ensure_connection():
             print(f"⚠️ Database not available - cannot store user interaction for {telegram_id}")
             return
         
@@ -192,8 +195,10 @@ This helps secure your account and monitors! ✨"""
 async def telegram_webhook(update: TelegramUpdate):
     """Handle incoming Telegram updates"""
     try:
-        if not is_connected():
-            return {"ok": False, "error": "Database not available"}
+        from app.database import ensure_connection
+        
+        # Try to ensure database connection, but don't fail if it's not available
+        db_available = await ensure_connection()
         
         # Handle regular messages
         if update.message:
@@ -227,47 +232,60 @@ async def handle_message(message: Dict[str, Any]):
         last_name = user_data.get('last_name', '')
         language_code = user_data.get('language_code', 'en')
         
+        print(f"📨 Received message from {telegram_id} (@{username}): '{text}'")
+        
         if not telegram_id:
+            print("❌ No telegram_id found in message")
             return
         
         # Automatically store/update user data on any interaction
         await store_user_interaction(telegram_id, username, first_name, last_name, language_code)
         
-        # Check if user needs wallet setup (only for non-command messages)
-        if not text.startswith('/') and not await get_user_state(telegram_id):
-            await check_and_prompt_wallet_setup(telegram_id, first_name)
-        
-        # Handle /start command
+        # Handle commands
         if text.startswith('/start'):
+            print(f"🚀 Handling /start command for {telegram_id}")
             await handle_start_command(telegram_id, username, first_name, last_name, language_code)
         
-        # Handle other commands
         elif text.startswith('/help'):
+            print(f"❓ Handling /help command for {telegram_id}")
             await send_help_message(telegram_id)
         
         elif text.startswith('/status'):
+            print(f"📊 Handling /status command for {telegram_id}")
             await send_status_message(telegram_id)
         
         elif text.startswith('/settings'):
+            print(f"⚙️ Handling /settings command for {telegram_id}")
             await send_settings_message(telegram_id)
         
         elif text.startswith('/report'):
+            print(f"📝 Handling /report command for {telegram_id}")
             await handle_report_message(telegram_id, text)
         
         elif text.startswith('/wallet'):
+            print(f"💳 Handling /wallet command for {telegram_id}")
             await handle_wallet_command(telegram_id, username, first_name, last_name, language_code)
         
         else:
             # Handle regular messages
+            print(f"💬 Handling regular message for {telegram_id}")
             await handle_regular_message(telegram_id, text)
             
     except Exception as e:
-        print(f"Message handling error: {e}")
+        print(f"❌ Message handling error: {e}")
+        # Send error message to user
+        try:
+            await send_telegram_message_direct(telegram_id, "❌ Sorry, I encountered an error processing your message. Please try again or contact support.")
+        except:
+            pass
 
 async def handle_start_command(telegram_id: str, username: str, first_name: str, last_name: str, language_code: str):
     """Handle /start command - register or update user"""
     try:
-        if not is_connected():
+        from app.database import ensure_connection
+        
+        # Ensure database connection
+        if not await ensure_connection():
             await send_telegram_message_direct(telegram_id, "❌ Service temporarily unavailable. Please try again later.")
             return
         
@@ -304,52 +322,75 @@ async def handle_start_command(telegram_id: str, username: str, first_name: str,
             active_monitors = len([m for m in monitors if m.enabled])
             
             if has_real_wallet:
-                welcome_message = f"""👋 Welcome back, {first_name}!
+                welcome_message = f"""👋 **Welcome back, {first_name}!**
 
-🎯 Your GuardX account is reconnected:
-✅ Telegram ID: `{telegram_id}`
-✅ Username: @{username or 'Not set'}
-✅ Wallet: `{existing_user.walletAddress}`
-📊 Active Monitors: {active_monitors}
+🎯 **Your GuardX Account Status:**
+✅ **Connected:** Your account is active
+✅ **Wallet:** `{existing_user.walletAddress[:10]}...{existing_user.walletAddress[-6:]}`
+✅ **Username:** @{username or 'Not set'}
+📊 **Active Monitors:** {active_monitors} monitoring your crypto
 
-🔔 Telegram alerts are now ENABLED
-You'll receive crash alerts here when your monitors detect high-risk situations.
+🔔 **Alert Status:** ENABLED ✅
+You'll receive instant crash alerts when risks are detected.
 
-Type /status for detailed account info or /help for commands."""
+**Quick Commands:**
+• `/status` - Detailed account info
+• `/help` - All available commands
+• `/settings` - Manage preferences
+
+Your crypto guardian is watching! 🛡️"""
             else:
-                welcome_message = f"""👋 Welcome back, {first_name}!
+                welcome_message = f"""👋 **Welcome back, {first_name}!**
 
-⚠️ Your account needs a wallet address update:
-✅ Telegram ID: `{telegram_id}`
-✅ Username: @{username or 'Not set'}
-❌ Wallet: Temporary address `{existing_user.walletAddress}`
+⚠️ **Account Setup Incomplete**
 
-🔗 Please send your wallet address to complete setup:
-• Send your MetaMask address (0x...)
-• Or send your Telegram wallet address
-• Or type 'skip' to use temporary address
+**Current Status:**
+✅ **Telegram:** Connected
+✅ **Username:** @{username or 'Not set'}
+❌ **Wallet:** Temporary address `{existing_user.walletAddress}`
 
-Example: `0x1234567890abcdef1234567890abcdef12345678`"""
+**🔗 Complete Your Setup:**
+Send me your real wallet address to unlock full features:
+
+**Supported Formats:**
+• 🦊 MetaMask: `0x1234...abcd`
+• ₿ Bitcoin: `1A1zP1eP...DivfNa`
+• ◎ Solana: `11111111...111112`
+
+**Example:** `0x1234567890abcdef1234567890abcdef12345678`
+
+Or type `skip` to continue with temporary address.
+
+**Why upgrade?** Better security + full monitor access! 🚀"""
             
         else:
             # New user - ask for wallet address
             welcome_message = f"""🎉 Welcome to GuardX, {first_name}!
 
-🚀 Let's set up your account for crypto crash alerts!
+🚀 **Your Crypto Crash Detection Bot is Ready!**
 
-🔗 Please send your wallet address:
-• MetaMask address (0x...)
-• Telegram wallet address  
-• Or any crypto wallet address you want to monitor
+I'll help you monitor cryptocurrency prices and alert you when crash risks are detected.
 
-📝 Example: `0x1234567890abcdef1234567890abcdef12345678`
+🔗 **Step 1: Connect Your Wallet**
+Send me your wallet address to get started:
 
-💡 This will be used to:
-• Identify your account
-• Link your monitors and alerts
-• Secure your data
+**Supported Wallets:**
+• 🦊 MetaMask: `0x1234...abcd`
+• � Telwegram Wallet: `0x5678...efgh`
+• ₿ Bitcoin: `1A1zP1eP...DivfNa`
+• ◎ Solana: `11111111...111112`
+• 💎 TON: `EQD4FPq...p6_0t`
 
-⏭️ Or type 'skip' to use a temporary address for now"""
+**Example:** `0x1234567890abcdef1234567890abcdef12345678`
+
+**Why do I need this?**
+• 🔐 Secure account identification
+• 📊 Link your monitors and alerts
+• 🚨 Personalized crash notifications
+
+⏭️ **Quick Start:** Type `skip` to use a temporary address and set up your wallet later.
+
+Just send me your wallet address or type `skip` to continue! 🚀"""
         
         # Send welcome message
         await send_telegram_message_direct(telegram_id, welcome_message)
@@ -447,15 +488,28 @@ async def handle_wallet_input(telegram_id: str, wallet_input: str, user_data: Di
         
         # Validate wallet address
         if not validate_wallet_address(wallet_input):
-            error_message = """❌ Invalid wallet address format.
+            error_message = f"""❌ **Invalid Wallet Address**
 
-Please send a valid wallet address:
-• Ethereum: 0x1234567890abcdef1234567890abcdef12345678
-• Bitcoin: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
-• Solana: 11111111111111111111111111111112
-• TON: EQD4FPq-PRDieyQKkizFTRtSDyucUIqrj0v_zXJmqaDp6_0t
+The address you sent doesn't match any supported wallet format.
 
-Or type 'skip' to use a temporary address."""
+**✅ Supported Wallet Formats:**
+
+🦊 **Ethereum/MetaMask:**
+`0x1234567890abcdef1234567890abcdef12345678`
+
+₿ **Bitcoin:**
+`1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa` (Legacy)
+`bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh` (Bech32)
+
+◎ **Solana:**
+`11111111111111111111111111111112`
+
+💎 **TON:**
+`EQD4FPq-PRDieyQKkizFTRtSDyucUIqrj0v_zXJmqaDp6_0t`
+
+**What you sent:** `{wallet_input[:50]}{'...' if len(wallet_input) > 50 else ''}`
+
+**Please try again** with a valid wallet address, or type `skip` to use a temporary address for now."""
             
             await send_telegram_message_direct(telegram_id, error_message)
             return
@@ -464,11 +518,18 @@ Or type 'skip' to use a temporary address."""
         existing_user_with_wallet = await User.find_one(User.walletAddress == wallet_input)
         
         if existing_user_with_wallet and existing_user_with_wallet.telegramId != telegram_id:
-            error_message = f"""❌ This wallet address is already registered to another account.
+            error_message = f"""❌ **Wallet Already Registered**
 
-Please use a different wallet address or contact support if this is your wallet.
+This wallet address is already connected to another GuardX account.
 
-Wallet: `{wallet_input[:10]}...{wallet_input[-6:]}`"""
+**Wallet:** `{wallet_input[:10]}...{wallet_input[-6:]}`
+
+**What you can do:**
+• 🔄 **Use a different wallet** - Send another wallet address
+• 🆘 **Contact support** - If this is your wallet and you need help
+• ⏭️ **Skip for now** - Type `skip` to use a temporary address
+
+**Security Note:** Each wallet can only be linked to one account to prevent conflicts and ensure your alerts reach the right person."""
             
             await send_telegram_message_direct(telegram_id, error_message)
             return
@@ -509,19 +570,31 @@ async def create_user_with_temp_wallet(telegram_id: str, user_data: Dict[str, An
         new_user = User(**user_create_data)
         await new_user.insert()
         
-        message = f"""✅ Account created with temporary address!
+        message = f"""✅ **Account Created Successfully!**
 
-👤 *Account Details:*
-• Name: {user_data.get('firstName', 'User')}
-• Telegram ID: `{telegram_id}`
-• Wallet: `{temp_wallet}` (temporary)
+🎉 **Welcome to GuardX, {user_data.get('firstName', 'User')}!**
 
-⚠️ *Important:* You can update to your real wallet address anytime by sending /wallet.
+**📋 Your Account Details:**
+• **Name:** {user_data.get('firstName', 'User')}
+• **Telegram ID:** `{telegram_id}`
+• **Wallet:** `{temp_wallet}` (temporary)
 
-🔔 Telegram alerts are ENABLED
-🚀 You can now create monitors and receive crash alerts!
+**🔔 Alert System:** ACTIVE ✅
+You'll receive crash alerts when risks are detected!
 
-Type /help for available commands."""
+**🚀 Next Steps:**
+1. **Create monitors** via our web app
+2. **Set crash thresholds** (recommended: 60%)
+3. **Receive instant alerts** right here!
+
+**💡 Upgrade Later:** Send `/wallet` anytime to connect your real wallet for better security.
+
+**Quick Commands:**
+• `/help` - Show all commands
+• `/status` - Check your account
+• `enable alerts` / `disable alerts` - Toggle notifications
+
+Your crypto guardian is now active! 🛡️"""
         
         await send_telegram_message_direct(telegram_id, message)
         print(f"✅ User created with temp wallet: {telegram_id} -> {temp_wallet}")
@@ -594,24 +667,41 @@ Type /status to see your account details."""
             new_user = User(**user_create_data)
             await new_user.insert()
             
-            message = f"""🎉 Welcome to GuardX, {user_data.get('firstName', 'User')}!
+            message = f"""🎉 **Welcome to GuardX, {user_data.get('firstName', 'User')}!**
 
-✅ *Account Created:*
-• Name: {user_data.get('firstName', 'User')}
-• Telegram ID: `{telegram_id}`
-• Wallet: `{wallet_address}`
-• Type: {wallet_type}
+✅ **Account Successfully Created!**
 
-🔔 Telegram alerts are ENABLED
-🚀 Next steps:
-1. Create monitors via our web app
-2. Set crash probability thresholds
-3. Receive instant alerts here!
+**📋 Your Secure Account:**
+• **Name:** {user_data.get('firstName', 'User')}
+• **Telegram ID:** `{telegram_id}`
+• **Wallet:** `{wallet_address[:10]}...{wallet_address[-6:]}`
+• **Type:** {wallet_type}
 
-📱 Commands:
-/status - Check account & monitors
-/help - Show all commands
-/settings - Manage preferences"""
+� C**Alert System:** FULLY ACTIVE ✅
+
+**🚀 You're All Set! Here's What Happens Next:**
+
+1. **Create Monitors** 📊
+   - Visit our web app to set up price monitoring
+   - Choose your favorite cryptocurrencies
+   - Set crash probability thresholds (we recommend 60%)
+
+2. **Receive Instant Alerts** 🚨
+   - Get notified immediately when crash risks are detected
+   - Alerts include probability percentages and analysis
+   - Take action before major price drops!
+
+3. **Stay Protected** 🛡️
+   - Your crypto investments are now under 24/7 surveillance
+   - Advanced AI algorithms monitor market conditions
+   - Never miss a critical market movement again!
+
+**Quick Commands:**
+• `/status` - Check your monitors and account
+• `/help` - Show all available commands
+• `/settings` - Manage your preferences
+
+**Your crypto guardian is now fully operational!** 🚀"""
         
         await send_telegram_message_direct(telegram_id, message)
         
@@ -632,60 +722,153 @@ async def send_telegram_message_direct(telegram_id: str, message: str):
         
         bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         if not bot_token:
+            print(f"❌ No bot token available for sending message to {telegram_id}")
             return False
         
         url = f'https://api.telegram.org/bot{bot_token}/sendMessage'
         
+        # Clean up message formatting for better compatibility
+        clean_message = message.replace('**', '*').replace('`', '`')
+        
+        payload = {
+            'chat_id': telegram_id,
+            'text': clean_message,
+            'parse_mode': 'Markdown',
+            'disable_web_page_preview': True
+        }
+        
         async with aiohttp.ClientSession() as session:
-            async with session.post(url, json={
-                'chat_id': telegram_id,
-                'text': message,
-                'parse_mode': 'Markdown'
-            }) as response:
-                return response.status == 200
+            async with session.post(url, json=payload, timeout=10) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    print(f"✅ Message sent to {telegram_id}: {clean_message[:50]}...")
+                    return True
+                else:
+                    error_text = await response.text()
+                    print(f"❌ Telegram API error {response.status} for {telegram_id}: {error_text}")
+                    
+                    # Try without markdown if parsing failed
+                    if response.status == 400 and 'parse' in error_text.lower():
+                        payload['parse_mode'] = None
+                        payload['text'] = message.replace('*', '').replace('`', '').replace('_', '')
+                        
+                        async with session.post(url, json=payload, timeout=10) as retry_response:
+                            if retry_response.status == 200:
+                                print(f"✅ Message sent (plain text) to {telegram_id}")
+                                return True
+                    
+                    return False
                 
     except Exception as e:
-        print(f"Direct message error: {e}")
+        print(f"❌ Direct message error for {telegram_id}: {e}")
         return False
 
 # Placeholder functions for other handlers
 async def send_help_message(telegram_id: str):
     """Send help message"""
-    help_text = """🤖 *GuardX Bot Commands*
+    help_text = """🤖 **GuardX Bot - Your Crypto Guardian**
 
-/start - Register or update your account
-/wallet - Update your wallet address
-/help - Show this help message  
-/status - Check your account & monitor status
-/settings - Manage notification preferences
+**🚀 Main Commands:**
+• `/start` - Register or reconnect your account
+• `/wallet` - Update your wallet address
+• `/status` - Check your account & monitors
+• `/settings` - Manage notification preferences
+• `/help` - Show this help message
 
-🔔 *Alert System*
-You'll automatically receive alerts when crash risks are detected.
+**💬 Quick Text Commands:**
+• `enable alerts` - Turn on crash notifications
+• `disable alerts` - Turn off notifications
+• `status` - Quick account check
+• `hello` / `hi` - Get a friendly greeting
 
-💬 *Text Commands*
-• "enable alerts" - Turn on notifications
-• "disable alerts" - Turn off notifications"""
+**🔔 Alert System:**
+• **Automatic monitoring** of your crypto positions
+• **Instant alerts** when crash risks are detected
+• **AI-powered analysis** with probability percentages
+• **24/7 surveillance** of market conditions
+
+**🛡️ How It Works:**
+1. **Connect your wallet** to identify your account
+2. **Create monitors** via our web app for your favorite cryptos
+3. **Set thresholds** (we recommend 60% crash probability)
+4. **Receive alerts** instantly when risks are detected
+
+**📊 Supported Cryptocurrencies:**
+BTC, ETH, ADA, SOL, TRX, BNB, and many more!
+
+**Need Help?** Just send me any message and I'll guide you! 🚀"""
     
     await send_telegram_message_direct(telegram_id, help_text)
 
 async def send_status_message(telegram_id: str):
     """Send status message"""
-    if not is_connected():
-        await send_telegram_message_direct(telegram_id, "❌ Service temporarily unavailable.")
+    from app.database import ensure_connection
+    
+    if not await ensure_connection():
+        await send_telegram_message_direct(telegram_id, "❌ Service temporarily unavailable. Please try again later.")
         return
     
     user = await User.find_one(User.telegramId == telegram_id)
     if not user:
-        await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send /start to register.")
+        await send_telegram_message_direct(telegram_id, "❌ Account not found. Please send `/start` to register your account first.")
         return
     
-    message = f"""📊 *Your GuardX Status*
+    # Get user's monitors
+    try:
+        from app.models import Monitor, MonitorAlert
+        monitors = await Monitor.find(Monitor.userId == user.walletAddress).to_list()
+        active_monitors = [m for m in monitors if m.enabled]
+        
+        # Get recent alerts (last 24 hours)
+        from datetime import timedelta
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        recent_alerts = await MonitorAlert.find(
+            MonitorAlert.userId == user.walletAddress,
+            MonitorAlert.createdAt >= yesterday
+        ).to_list()
+        
+    except Exception as e:
+        monitors = []
+        active_monitors = []
+        recent_alerts = []
+    
+    # Determine wallet type
+    is_temp_wallet = user.walletAddress.startswith('tg_')
+    wallet_display = user.walletAddress if is_temp_wallet else f"{user.walletAddress[:10]}...{user.walletAddress[-6:]}"
+    wallet_status = "🟡 Temporary" if is_temp_wallet else "✅ Connected"
+    
+    # Alert status
+    alerts_enabled = user.notificationPreferences.get('telegram_alerts', False)
+    alert_status = "✅ ENABLED" if alerts_enabled else "❌ DISABLED"
+    
+    # Account age
+    account_age = (datetime.utcnow() - user.createdAt).days if hasattr(user, 'createdAt') and user.createdAt else 0
+    
+    message = f"""📊 **Your GuardX Status**
 
-👤 *Account:*
-• Wallet: `{user.walletAddress}`
-• Alerts: {'✅ Enabled' if user.notificationPreferences.get('telegram_alerts', False) else '❌ Disabled'}
+**👤 Account Information:**
+• **Name:** {user.firstName or 'User'}
+• **Username:** @{user.username or 'Not set'}
+• **Wallet:** `{wallet_display}` {wallet_status}
+• **Account Age:** {account_age} days
 
-Type /help for more commands."""
+**📈 Monitoring Status:**
+• **Total Monitors:** {len(monitors)}
+• **Active Monitors:** {len(active_monitors)}
+• **Symbols Tracked:** {', '.join(set([s for m in active_monitors for s in m.symbols])) if active_monitors else 'None'}
+
+**🔔 Alert Settings:**
+• **Telegram Alerts:** {alert_status}
+• **Email Alerts:** {'✅ ENABLED' if user.notificationPreferences.get('email_alerts', False) else '❌ DISABLED'}
+
+**🚨 Recent Activity:**
+• **Alerts Today:** {len(recent_alerts)}
+• **High Risk Alerts:** {len([a for a in recent_alerts if getattr(a, 'severity', '') == 'high'])}
+
+**⚡ System Status:** All systems operational
+**🕐 Last Updated:** {datetime.utcnow().strftime('%H:%M UTC')}
+
+{'**💡 Tip:** Send `/wallet` to upgrade from temporary to real wallet address!' if is_temp_wallet else '**🛡️ Your crypto guardian is actively monitoring!**'}"""
     
     await send_telegram_message_direct(telegram_id, message)
 

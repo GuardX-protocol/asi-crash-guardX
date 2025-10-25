@@ -20,25 +20,55 @@ async def connect_to_mongo():
         
         if not mongodb_url:
             logger.error("❌ MONGODB_URL environment variable is required")
-            raise Exception("MongoDB URL not configured - this is required for the application to function")
+            database.connected = False
+            return False
         
         if not database_name:
             logger.error("❌ DATABASE_NAME environment variable is required")
-            raise Exception("Database name not configured")
+            database.connected = False
+            return False
         
         logger.info(f"🔗 Connecting to MongoDB: {database_name}")
-        database.client = AsyncIOMotorClient(mongodb_url, serverSelectionTimeoutMS=10000)
+        logger.info(f"🔗 MongoDB URL configured: {mongodb_url[:50]}...")
         
-        # Test connection
-        await database.client.admin.command('ping')
-        logger.info("✅ MongoDB ping successful")
+        # Optimized settings for serverless environments
+        database.client = AsyncIOMotorClient(
+            mongodb_url, 
+            serverSelectionTimeoutMS=15000,  # 15 seconds for faster startup
+            connectTimeoutMS=15000,          # 15 seconds
+            socketTimeoutMS=15000,           # 15 seconds
+            retryWrites=True,
+            retryReads=True,
+            maxPoolSize=5,                   # Smaller pool for serverless
+            minPoolSize=0,                   # No minimum connections
+            maxIdleTimeMS=30000,             # Close idle connections faster
+            heartbeatFrequencyMS=10000       # Check connection health more frequently
+        )
+        
+        # Test connection with detailed error logging
+        logger.info("🔄 Testing MongoDB connection...")
+        try:
+            await database.client.admin.command('ping')
+            logger.info("✅ MongoDB ping successful")
+        except Exception as ping_error:
+            logger.error(f"❌ MongoDB ping failed: {ping_error}")
+            logger.error(f"❌ Error type: {type(ping_error).__name__}")
+            database.connected = False
+            return False
         
         database.database = database.client[database_name]
         
-        await init_beanie(
-            database=database.database,
-            document_models=[User, Monitor, MonitorAlert]
-        )
+        # Initialize Beanie with error handling
+        try:
+            await init_beanie(
+                database=database.database,
+                document_models=[User, Monitor, MonitorAlert]
+            )
+            logger.info("✅ Beanie initialized successfully")
+        except Exception as beanie_error:
+            logger.error(f"❌ Beanie initialization failed: {beanie_error}")
+            database.connected = False
+            return False
         
         database.connected = True
         logger.info(f"✅ Successfully connected to MongoDB: {database_name}")
@@ -46,13 +76,17 @@ async def connect_to_mongo():
         
     except Exception as e:
         logger.error(f"❌ Failed to connect to MongoDB: {e}")
-        logger.error("❌ Application cannot start without MongoDB connection")
         database.connected = False
-        raise e  # Re-raise the exception to stop the application
+        return False
 
 async def close_mongo_connection():
-    if database.client:
-        database.client.close()
+    try:
+        if database.client:
+            database.client.close()
+            logger.info("✅ MongoDB connection closed")
+        database.connected = False
+    except Exception as e:
+        logger.error(f"Error closing MongoDB connection: {e}")
         database.connected = False
 
 def get_database():
@@ -60,3 +94,21 @@ def get_database():
 
 def is_connected():
     return database.connected
+
+async def ensure_connection():
+    """Ensure database connection is active, reconnect if needed"""
+    if not database.connected:
+        logger.info("🔄 Database not connected, attempting to reconnect...")
+        return await connect_to_mongo()
+    
+    # Test if connection is still alive
+    try:
+        if database.client:
+            await database.client.admin.command('ping')
+            return True
+    except Exception as e:
+        logger.warning(f"⚠️ Database connection test failed: {e}")
+        database.connected = False
+        return await connect_to_mongo()
+    
+    return True

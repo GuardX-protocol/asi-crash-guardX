@@ -8,34 +8,56 @@ router = APIRouter()
 
 @router.post("/")
 async def create_user(user: UserCreate):
-    if not is_connected():
+    from app.database import ensure_connection
+    
+    # Ensure database connection
+    if not await ensure_connection():
         raise HTTPException(status_code=503, detail="Database not available")
     
-    existing_user = await User.find_one(User.walletAddress == user.walletAddress)
-    if existing_user:
-        raise HTTPException(status_code=400, detail="User with this wallet address already exists")
-    
-    new_user = User(**user.dict())
-    await new_user.insert()
-    return new_user
+    try:
+        existing_user = await User.find_one(User.walletAddress == user.walletAddress)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="User with this wallet address already exists")
+        
+        new_user = User(**user.dict())
+        await new_user.insert()
+        return new_user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database operation failed: {str(e)}")
 
 @router.get("/{wallet_address}")
 async def get_user(wallet_address: str):
-    if not is_connected():
+    from app.database import ensure_connection
+    
+    # Ensure database connection
+    if not await ensure_connection():
         raise HTTPException(status_code=503, detail="Database not available")
     
-    user = await User.find_one(User.walletAddress == wallet_address)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+    try:
+        user = await User.find_one(User.walletAddress == wallet_address)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database operation failed: {str(e)}")
 
 @router.get("/")
 async def get_users(skip: int = 0, limit: int = 100):
-    if not is_connected():
+    from app.database import ensure_connection
+    
+    # Ensure database connection
+    if not await ensure_connection():
         raise HTTPException(status_code=503, detail="Database not available")
     
-    users = await User.find_all().skip(skip).limit(limit).to_list()
-    return users
+    try:
+        users = await User.find_all().skip(skip).limit(limit).to_list()
+        return users
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database operation failed: {str(e)}")
 
 @router.put("/{wallet_address}")
 async def update_user(wallet_address: str, user_update: dict):

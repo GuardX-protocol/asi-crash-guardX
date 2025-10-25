@@ -10,14 +10,24 @@ from typing import Dict, List, Optional, Any
 import json
 from app.database import is_connected
 from app.models import Monitor, MonitorAlert, User
-from app.services.prophet_crash_detector import ProphetCrashDetector
+# Optional import for Prophet crash detector
+try:
+    from app.services.prophet_crash_detector import ProphetCrashDetector
+    PROPHET_AVAILABLE = True
+except ImportError:
+    ProphetCrashDetector = None
+    PROPHET_AVAILABLE = False
+
+# Always available simple crash detector
+from app.services.simple_crash_detector import SimpleCrashDetector
 
 logger = logging.getLogger(__name__)
 
 class MonitorService:
     def __init__(self):
         self.running = False
-        self.crash_detector = ProphetCrashDetector()
+        self.crash_detector = ProphetCrashDetector() if PROPHET_AVAILABLE else None
+        self.simple_detector = SimpleCrashDetector()  # Always available fallback
         self.price_history = {}  # Store price history for each symbol
         self.last_prices = {}    # Store last known prices
         self.monitor_intervals = {}  # Track individual monitor intervals
@@ -138,22 +148,22 @@ class MonitorService:
         return time_since_last >= interval_seconds
     
     async def _get_symbol_prices(self, symbols: List[str]) -> Dict[str, float]:
-        """Get current prices for symbols"""
+        """Get current prices for symbols using Binance API service"""
         try:
-            prices = {}
+            from app.services.binance_api import binance_api
             
-            for symbol in symbols:
-                # Ensure symbol has USDT suffix for Binance
-                binance_symbol = symbol if symbol.endswith('USDT') else f"{symbol}USDT"
-                
-                async with aiohttp.ClientSession() as session:
-                    url = f"https://api.binance.com/api/v3/ticker/price?symbol={binance_symbol}"
-                    async with session.get(url, timeout=10) as response:
-                        if response.status == 200:
-                            data = await response.json()
-                            prices[symbol] = float(data['price'])
-                        else:
-                            logger.warning(f"Failed to get price for {symbol}: {response.status}")
+            # Get prices using the new service
+            price_data = await binance_api.get_multiple_prices(symbols)
+            
+            # Convert to simple price dictionary
+            prices = {}
+            for symbol, data in price_data.items():
+                # Remove USDT suffix if it was added
+                original_symbol = symbol.replace('USDT', '') if symbol.endswith('USDT') and symbol != 'USDT' else symbol
+                if original_symbol in symbols:
+                    prices[original_symbol] = data['price']
+                else:
+                    prices[symbol] = data['price']
             
             return prices
             
@@ -189,15 +199,34 @@ class MonitorService:
                         'threshold': monitor.price_change_threshold
                     })
             
-            # Crash probability analysis using Prophet
-            if len(price_history) >= 30:  # Minimum for Prophet
+            # Crash probability analysis
+            if len(price_history) >= 10:  # Minimum for analysis
                 timestamps = [datetime.utcnow() - timedelta(minutes=i) for i in range(len(price_history)-1, -1, -1)]
+                crash_analysis = None
                 
-                crash_analysis = self.crash_detector.predict_crash(
-                    symbol, price_history, timestamps, periods=10
-                )
+                # Try Prophet first if available
+                if PROPHET_AVAILABLE and self.crash_detector and len(price_history) >= 30:
+                    try:
+                        crash_analysis = self.crash_detector.predict_crash(
+                            symbol, price_history, timestamps, periods=10
+                        )
+                        logger.debug(f"Using Prophet crash detection for {symbol}")
+                    except Exception as e:
+                        logger.warning(f"Prophet crash detection failed for {symbol}: {e}")
                 
-                if crash_analysis.get('crash_probability', 0) >= monitor.crash_probability_threshold:
+                # Fallback to simple detector
+                if not crash_analysis or crash_analysis.get('error'):
+                    try:
+                        crash_analysis = self.simple_detector.predict_crash(
+                            symbol, price_history, timestamps, periods=10
+                        )
+                        logger.debug(f"Using simple crash detection for {symbol}")
+                    except Exception as e:
+                        logger.error(f"Simple crash detection failed for {symbol}: {e}")
+                        crash_analysis = None
+                
+                # Check if alert should be triggered
+                if crash_analysis and crash_analysis.get('crash_probability', 0) >= monitor.crash_probability_threshold:
                     alerts.append({
                         'type': 'crash_detection',
                         'severity': 'high' if crash_analysis['crash_probability'] >= 80 else 'medium',
