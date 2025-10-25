@@ -316,25 +316,14 @@ async def send_crash_alert(alert: AlertMessage):
     try:
         from app.models import User
         from app.database import is_connected
-        from app.services.fallback_storage import fallback_storage
+        
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
         
         # Find user by wallet address or telegram ID
-        user = None
-        
-        if is_connected():
-            # Try to find by wallet address first, then by telegram ID
-            user = await User.find_one(User.walletAddress == alert.user_id)
-            if not user:
-                user = await User.find_one(User.telegramId == alert.user_id)
-        else:
-            # Use fallback storage
-            user = await fallback_storage.get_user(alert.user_id)
-            if not user:
-                users = await fallback_storage.get_users()
-                for u in users:
-                    if getattr(u, 'telegramId', None) == alert.user_id:
-                        user = u
-                        break
+        user = await User.find_one(User.walletAddress == alert.user_id)
+        if not user:
+            user = await User.find_one(User.telegramId == alert.user_id)
         
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
@@ -437,36 +426,24 @@ async def get_users_with_telegram_alerts():
     try:
         from app.models import User
         from app.database import is_connected
-        from app.services.fallback_storage import fallback_storage
+        
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
         
         users_with_alerts = []
         
-        if is_connected():
-            # Use MongoDB
-            users = await User.find_all().to_list()
-            for user in users:
-                prefs = getattr(user, 'notificationPreferences', {})
-                if prefs.get('telegram_alerts', False) and getattr(user, 'telegramId', None):
-                    users_with_alerts.append({
-                        "wallet_address": user.walletAddress,
-                        "telegram_id": user.telegramId,
-                        "username": getattr(user, 'username', None),
-                        "first_name": getattr(user, 'firstName', None),
-                        "is_active": getattr(user, 'isActive', True)
-                    })
-        else:
-            # Use fallback storage
-            users = await fallback_storage.get_users()
-            for user in users:
-                prefs = getattr(user, 'notificationPreferences', {})
-                if prefs.get('telegram_alerts', False) and getattr(user, 'telegramId', None):
-                    users_with_alerts.append({
-                        "wallet_address": user.walletAddress,
-                        "telegram_id": user.telegramId,
-                        "username": getattr(user, 'username', None),
-                        "first_name": getattr(user, 'firstName', None),
-                        "is_active": getattr(user, 'isActive', True)
-                    })
+        # Use MongoDB
+        users = await User.find_all().to_list()
+        for user in users:
+            prefs = getattr(user, 'notificationPreferences', {})
+            if prefs.get('telegram_alerts', False) and getattr(user, 'telegramId', None):
+                users_with_alerts.append({
+                    "wallet_address": user.walletAddress,
+                    "telegram_id": user.telegramId,
+                    "username": getattr(user, 'username', None),
+                    "first_name": getattr(user, 'firstName', None),
+                    "is_active": getattr(user, 'isActive', True)
+                })
         
         return {
             "total_users": len(users_with_alerts),

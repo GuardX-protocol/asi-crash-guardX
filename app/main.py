@@ -202,3 +202,124 @@ async def get_monitor_service_status_endpoint():
     """Get monitor service status"""
     return get_monitor_service_status()
 
+@app.get("/database/status")
+async def get_database_status():
+    """Get database connection status and test data retrieval"""
+    from app.database import is_connected, get_database
+    
+    try:
+        status = {
+            "mongodb_connected": is_connected(),
+            "mongodb_url_configured": bool(os.getenv("MONGODB_URL")),
+            "database_name": os.getenv("DATABASE_NAME", "guardx_monitor"),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        
+        # Test data retrieval
+        if is_connected():
+            try:
+                from app.models import User, Monitor, MonitorAlert
+                
+                # Count documents
+                user_count = await User.count()
+                monitor_count = await Monitor.count()
+                alert_count = await MonitorAlert.count()
+                
+                # Get sample data
+                sample_users = await User.find_all().limit(3).to_list()
+                sample_monitors = await Monitor.find_all().limit(3).to_list()
+                
+                status.update({
+                    "mongodb_data": {
+                        "user_count": user_count,
+                        "monitor_count": monitor_count,
+                        "alert_count": alert_count,
+                        "sample_users": [
+                            {
+                                "walletAddress": user.walletAddress,
+                                "telegramId": getattr(user, 'telegramId', None),
+                                "username": getattr(user, 'username', None),
+                                "createdAt": getattr(user, 'createdAt', None)
+                            } for user in sample_users
+                        ],
+                        "sample_monitors": [
+                            {
+                                "name": monitor.name,
+                                "userId": monitor.userId,
+                                "symbols": monitor.symbols,
+                                "enabled": monitor.enabled
+                            } for monitor in sample_monitors
+                        ]
+                    }
+                })
+                
+            except Exception as e:
+                status["mongodb_error"] = str(e)
+        else:
+            status["error"] = "Database not connected - fallback storage removed"
+        
+        return status
+        
+    except Exception as e:
+        return {
+            "error": str(e),
+            "mongodb_connected": False,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+@app.post("/database/test-connection")
+async def test_database_connection():
+    """Test database connection and operations"""
+    from app.database import is_connected
+    from app.models import User
+    
+    results = {
+        "mongodb_url": os.getenv("MONGODB_URL", "Not configured"),
+        "database_name": os.getenv("DATABASE_NAME", "guardx_monitor"),
+        "connection_test": None,
+        "data_test": None,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    
+    try:
+        # Test MongoDB connection
+        if is_connected():
+            results["connection_test"] = "MongoDB connected"
+            
+            # Test data operations
+            try:
+                # Try to find a user
+                test_user = await User.find_one()
+                if test_user:
+                    results["data_test"] = {
+                        "status": "Data found",
+                        "sample_user": {
+                            "walletAddress": test_user.walletAddress,
+                            "telegramId": getattr(test_user, 'telegramId', None),
+                            "hasData": True
+                        }
+                    }
+                else:
+                    results["data_test"] = {
+                        "status": "No data found",
+                        "message": "Database connected but no users exist"
+                    }
+                    
+            except Exception as e:
+                results["data_test"] = {
+                    "status": "Data operation failed",
+                    "error": str(e)
+                }
+        else:
+            results["connection_test"] = "MongoDB not connected"
+            results["data_test"] = {
+                "status": "Database unavailable",
+                "message": "Fallback storage has been removed - MongoDB required"
+            }
+        
+        return results
+        
+    except Exception as e:
+        results["error"] = str(e)
+        return results
+

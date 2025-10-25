@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import List, Dict, Optional, Any
-from app.services.fallback_storage import fallback_storage
 from app.database import is_connected
 from app.models import User, Monitor, MonitorAlert
 from app.models import (
@@ -111,21 +110,16 @@ async def get_single_crypto_price(symbol: str):
 @router.post("/monitor/create", response_model=MonitorConfigResponse)
 async def create_monitor_config(config: MonitorConfigRequest):
     try:
-        # Check if monitor already exists
-        if is_connected():
-            existing_monitor = await Monitor.find_one(Monitor.name == config.name)
-        else:
-            existing_monitor = await fallback_storage.get_monitor(config.name)
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
         
+        # Check if monitor already exists
+        existing_monitor = await Monitor.find_one(Monitor.name == config.name)
         if existing_monitor:
             raise HTTPException(status_code=400, detail=f"Monitor '{config.name}' already exists")
         
         # Check if user exists
-        if is_connected():
-            user = await User.find_one(User.walletAddress == config.userId)
-        else:
-            user = await fallback_storage.get_user(config.userId)
-        
+        user = await User.find_one(User.walletAddress == config.userId)
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
@@ -147,11 +141,8 @@ async def create_monitor_config(config: MonitorConfigRequest):
             "email_alerts": config.email_alerts
         }
         
-        if is_connected():
-            new_monitor = Monitor(**monitor_data)
-            await new_monitor.insert()
-        else:
-            new_monitor = await fallback_storage.create_monitor(monitor_data)
+        new_monitor = Monitor(**monitor_data)
+        await new_monitor.insert()
         
         return MonitorConfigResponse(
             name=new_monitor.name,
@@ -176,16 +167,13 @@ async def create_monitor_config(config: MonitorConfigRequest):
 @router.get("/monitors")
 async def list_monitor_configs(user_id: Optional[str] = Query(None)):
     try:
-        if is_connected():
-            if user_id:
-                monitors = await Monitor.find(Monitor.userId == user_id).to_list()
-            else:
-                monitors = await Monitor.find_all().to_list()
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        if user_id:
+            monitors = await Monitor.find(Monitor.userId == user_id).to_list()
         else:
-            if user_id:
-                monitors = await fallback_storage.get_monitors(user_id)
-            else:
-                monitors = await fallback_storage.get_monitors()
+            monitors = await Monitor.find_all().to_list()
         
         configs = []
         for monitor in monitors:
@@ -216,23 +204,18 @@ async def get_alerts(
     limit: int = Query(100, le=1000)
 ):
     try:
-        if is_connected():
-            query = {}
-            if user_id:
-                query['userId'] = user_id
-            if symbol:
-                query['symbol'] = symbol.upper()
-            if severity:
-                query['severity'] = severity
-            
-            alerts = await MonitorAlert.find(query).limit(limit).to_list()
-        else:
-            alerts = await fallback_storage.get_alerts(
-                user_id=user_id,
-                symbol=symbol,
-                severity=severity,
-                limit=limit
-            )
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        query = {}
+        if user_id:
+            query['userId'] = user_id
+        if symbol:
+            query['symbol'] = symbol.upper()
+        if severity:
+            query['severity'] = severity
+        
+        alerts = await MonitorAlert.find(query).limit(limit).to_list()
         return alerts
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -240,11 +223,10 @@ async def get_alerts(
 @router.get("/monitor", response_model=MonitorStatusResponse)
 async def get_monitor_status():
     try:
-        if is_connected():
-            monitors = await Monitor.find_all().to_list()
-        else:
-            monitors = await fallback_storage.get_monitors()
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
         
+        monitors = await Monitor.find_all().to_list()
         active_monitors = [m for m in monitors if m.enabled]
         
         return MonitorStatusResponse(
@@ -259,12 +241,11 @@ async def get_monitor_status():
 async def patch_monitor_config(monitor_name: str, monitor_patch: dict):
     """Partial update of monitor configuration"""
     try:
-        # Check if monitor exists
-        if is_connected():
-            existing_monitor = await Monitor.find_one(Monitor.name == monitor_name)
-        else:
-            existing_monitor = await fallback_storage.get_monitor(monitor_name)
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
         
+        # Check if monitor exists
+        existing_monitor = await Monitor.find_one(Monitor.name == monitor_name)
         if not existing_monitor:
             raise HTTPException(status_code=404, detail="Monitor not found")
         
@@ -276,11 +257,8 @@ async def patch_monitor_config(monitor_name: str, monitor_patch: dict):
         if "symbols" in update_fields:
             update_fields["symbols"] = [s.upper() for s in update_fields["symbols"]]
         
-        if is_connected():
-            await existing_monitor.update({"$set": update_fields})
-            updated_monitor = await Monitor.find_one(Monitor.name == monitor_name)
-        else:
-            updated_monitor = await fallback_storage.update_monitor(monitor_name, update_fields)
+        await existing_monitor.update({"$set": update_fields})
+        updated_monitor = await Monitor.find_one(Monitor.name == monitor_name)
         
         if not updated_monitor:
             raise HTTPException(status_code=404, detail="Monitor not found")
@@ -309,12 +287,11 @@ async def patch_monitor_config(monitor_name: str, monitor_patch: dict):
 async def update_monitor_config(monitor_name: str, config: MonitorConfigRequest):
     """Full update of monitor configuration"""
     try:
-        # Check if monitor exists
-        if is_connected():
-            existing_monitor = await Monitor.find_one(Monitor.name == monitor_name)
-        else:
-            existing_monitor = await fallback_storage.get_monitor(monitor_name)
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
         
+        # Check if monitor exists
+        existing_monitor = await Monitor.find_one(Monitor.name == monitor_name)
         if not existing_monitor:
             raise HTTPException(status_code=404, detail="Monitor not found")
         
@@ -335,11 +312,8 @@ async def update_monitor_config(monitor_name: str, config: MonitorConfigRequest)
             "updatedAt": datetime.utcnow()
         }
         
-        if is_connected():
-            await existing_monitor.update({"$set": monitor_data})
-            updated_monitor = await Monitor.find_one(Monitor.name == monitor_name)
-        else:
-            updated_monitor = await fallback_storage.update_monitor(monitor_name, monitor_data)
+        await existing_monitor.update({"$set": monitor_data})
+        updated_monitor = await Monitor.find_one(Monitor.name == monitor_name)
         
         if not updated_monitor:
             raise HTTPException(status_code=404, detail="Monitor not found")
@@ -368,15 +342,13 @@ async def update_monitor_config(monitor_name: str, config: MonitorConfigRequest)
 async def delete_monitor_config(monitor_name: str):
     """Delete monitor configuration"""
     try:
-        if is_connected():
-            monitor = await Monitor.find_one(Monitor.name == monitor_name)
-            if not monitor:
-                raise HTTPException(status_code=404, detail="Monitor not found")
-            await monitor.delete()
-        else:
-            success = await fallback_storage.delete_monitor(monitor_name)
-            if not success:
-                raise HTTPException(status_code=404, detail="Monitor not found")
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
+        
+        monitor = await Monitor.find_one(Monitor.name == monitor_name)
+        if not monitor:
+            raise HTTPException(status_code=404, detail="Monitor not found")
+        await monitor.delete()
         
         return {"message": f"Monitor '{monitor_name}' deleted successfully"}
     except HTTPException:
@@ -393,12 +365,11 @@ async def trigger_monitoring():
         if not monitor_service.running:
             return {"error": "Monitor service is not running"}
         
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
+        
         # Get active monitors
-        if is_connected():
-            monitors = await Monitor.find(Monitor.enabled == True).to_list()
-        else:
-            all_monitors = await fallback_storage.get_monitors()
-            monitors = [m for m in all_monitors if getattr(m, 'enabled', False)]
+        monitors = await Monitor.find(Monitor.enabled == True).to_list()
         
         if not monitors:
             return {"message": "No active monitors found"}
@@ -425,21 +396,19 @@ async def trigger_monitoring():
 async def patch_alert(alert_id: str, alert_patch: dict):
     """Partial update of alert"""
     try:
+        if not is_connected():
+            raise HTTPException(status_code=503, detail="Database not available")
+        
         # Only update provided fields
         update_fields = {k: v for k, v in alert_patch.items() if v is not None}
         update_fields["updatedAt"] = datetime.utcnow()
         
-        if is_connected():
-            from bson import ObjectId
-            alert = await MonitorAlert.find_one(MonitorAlert.id == ObjectId(alert_id))
-            if not alert:
-                raise HTTPException(status_code=404, detail="Alert not found")
-            await alert.update({"$set": update_fields})
-            updated_alert = await MonitorAlert.find_one(MonitorAlert.id == ObjectId(alert_id))
-        else:
-            updated_alert = await fallback_storage.update_alert(alert_id, update_fields)
-            if not updated_alert:
-                raise HTTPException(status_code=404, detail="Alert not found")
+        from bson import ObjectId
+        alert = await MonitorAlert.find_one(MonitorAlert.id == ObjectId(alert_id))
+        if not alert:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        await alert.update({"$set": update_fields})
+        updated_alert = await MonitorAlert.find_one(MonitorAlert.id == ObjectId(alert_id))
         
         return updated_alert
     except HTTPException:
