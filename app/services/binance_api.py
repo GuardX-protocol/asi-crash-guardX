@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class BinanceAPIService:
     def __init__(self):
-        self.base_url = "https://api.binance.com/api/v3/exchangeInfo"
+        self.base_url = "https://api.binance.com/api/v3"
         self.price_cache = {}
         self.cache_timestamp = {}
         self.cache_duration = 30  # seconds

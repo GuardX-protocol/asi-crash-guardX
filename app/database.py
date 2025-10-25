@@ -28,8 +28,8 @@ async def connect_to_mongo():
             database.connected = False
             return False
         
-        logger.info(f"🔗 Connecting to MongoDB: {database_name}")
-        logger.info(f"🔗 MongoDB URL configured: {mongodb_url[:50]}...")
+        logger.info(f"🔗 Connecting to Database: {database_name}")
+        logger.info(f"🔗 MongoDB URL configured")
         
         # Optimized settings for serverless environments
         database.client = AsyncIOMotorClient(

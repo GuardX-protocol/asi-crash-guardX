@@ -1,8 +1,21 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from beanie import Document
+from beanie import Document, PydanticObjectId
 from pymongo import IndexModel
+
+class MonitorReference(BaseModel):
+    """Reference to a monitor with ID and name for easy access"""
+    id: str = Field(..., description="Monitor ID")
+    name: str = Field(..., description="Monitor name")
+    enabled: bool = Field(True, description="Whether the monitor is enabled")
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="When this monitor was created")
+    symbols: List[str] = Field(default_factory=list, description="Symbols being monitored")
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 class User(Document):
     walletAddress: str = Field(..., unique=True, description="Unique wallet address or Telegram-based ID")
@@ -21,7 +34,7 @@ class User(Document):
         },
         description="User notification preferences"
     )
-    monitors: List[str] = Field(default_factory=list, description="List of monitor IDs associated with user")
+    monitors: List[MonitorReference] = Field(default_factory=list, description="List of monitors associated with user")
     createdAt: datetime = Field(default_factory=datetime.utcnow, description="Account creation timestamp")
     updatedAt: datetime = Field(default_factory=datetime.utcnow, description="Last update timestamp")
     lastLoginAt: Optional[datetime] = Field(None, description="Last login/interaction timestamp")
@@ -38,17 +51,20 @@ class User(Document):
 
 class Monitor(Document):
     name: str = Field(..., unique=True)
-    userId: str
+    userId: str = Field(..., description="User wallet address who created this monitor")
     symbols: List[str]
+    crash_threshold: float = Field(default=10.0, description="Minimum price drop % to trigger alert")
+    enabled: bool = True
+    notification_channels: List[str] = Field(default_factory=lambda: ["telegram"], description="telegram, email")
     interval_seconds: int = 300
     interval_str: str = "5m"
     price_change_threshold: float = 5.0
     volume_change_threshold: float = 50.0
     crash_probability_threshold: float = 60.0
-    enabled: bool = True
     alert_webhooks: List[str] = Field(default_factory=list)
     telegram_alerts: bool = False
     email_alerts: bool = False
+    last_check: Optional[datetime] = Field(None, description="Last time this monitor was checked")
     createdAt: datetime = Field(default_factory=datetime.utcnow)
     updatedAt: datetime = Field(default_factory=datetime.utcnow)
     
@@ -61,17 +77,30 @@ class Monitor(Document):
         ]
 
 class MonitorAlert(Document):
-    monitorId: str
-    userId: str
-    symbol: str
-    alertType: str
+    monitorId: str = Field(..., description="Monitor ID that triggered this alert")
+    userId: str = Field(..., description="User wallet address who owns the monitor")
+    symbol: str = Field(..., description="The cryptocurrency symbol that crashed (e.g., BTCUSDT)")
+    token_name: str = Field(..., description="Human readable token name (e.g., Bitcoin)")
     crash_probability: Optional[float] = None
+    current_price: float
+    price_drop: float = Field(description="Price drop percentage")
+    price_before_crash: Optional[float] = Field(None, description="Price before the crash")
+    analysis: str = Field(description="AI analysis of the crash")
+    crash_detected_at: datetime = Field(default_factory=datetime.utcnow, description="When the crash was detected")
+    notification_sent: bool = False
+    notification_channels: List[str] = Field(default_factory=list, description="Channels where notification was sent")
+    telegram_sent: bool = False
+    email_sent: bool = False
+    webhook_sent: bool = False
+    # Technical analysis data
+    technical_indicators: Dict[str, Any] = Field(default_factory=dict, description="Technical analysis indicators")
+    asi_analysis: Optional[str] = None
+    confidence_level: Optional[str] = Field(None, description="Confidence level of crash detection")
+    # Legacy fields for backward compatibility
+    alertType: Optional[str] = None
     price_change: Optional[float] = None
     volume_change: Optional[float] = None
-    current_price: float
-    asi_analysis: Optional[str] = None
-    technical_indicators: Dict[str, Any] = Field(default_factory=dict)
-    severity: str
+    severity: Optional[str] = None
     sent_telegram: bool = False
     sent_email: bool = False
     sent_webhook: bool = False

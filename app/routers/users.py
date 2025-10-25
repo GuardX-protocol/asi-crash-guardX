@@ -76,19 +76,43 @@ async def update_user(wallet_address: str, user_update: dict):
 @router.patch("/{wallet_address}")
 async def patch_user(wallet_address: str, user_patch: dict):
     """Partial update of user (updates only provided fields)"""
-    if not is_connected():
+    from app.database import ensure_connection
+    
+    # Ensure database connection
+    if not await ensure_connection():
         raise HTTPException(status_code=503, detail="Database not available")
     
-    user = await User.find_one(User.walletAddress == wallet_address)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    
-    # Only update provided fields
-    update_fields = {k: v for k, v in user_patch.items() if v is not None}
-    update_fields["updatedAt"] = datetime.utcnow()
-    
-    await user.update({"$set": update_fields})
-    return await User.find_one(User.walletAddress == wallet_address)
+    try:
+        user = await User.find_one(User.walletAddress == wallet_address)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate email format if email is being updated
+        if "email" in user_patch and user_patch["email"]:
+            import re
+            email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+            if not re.match(email_pattern, user_patch["email"]):
+                raise HTTPException(status_code=400, detail="Invalid email format")
+        
+        # Only update provided fields (exclude None values)
+        update_fields = {k: v for k, v in user_patch.items() if v is not None}
+        update_fields["updatedAt"] = datetime.utcnow()
+        
+        # Update user fields directly
+        for field, value in update_fields.items():
+            if hasattr(user, field):
+                setattr(user, field, value)
+        
+        await user.save()
+        
+        # Return updated user
+        updated_user = await User.find_one(User.walletAddress == wallet_address)
+        return updated_user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database operation failed: {str(e)}")
 
 @router.delete("/{wallet_address}")
 async def delete_user(wallet_address: str):
